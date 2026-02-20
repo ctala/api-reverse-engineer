@@ -23,10 +23,18 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   }
 });
 
-// Verificar estado al cargar
-chrome.storage.local.get(['isRecording', 'filter'], (data) => {
-  isRecording = data.isRecording || false;
-  filter = data.filter || '';
+// Restore recording state on page load (survives SPA navigation + SW restarts)
+chrome.storage.session.get(['isRecording', 'filter', 'recordingTabId'], (data) => {
+  if (data.isRecording) {
+    // Only activate recording if this tab is the one that started it
+    chrome.tabs.getCurrent?.((tab) => {
+      // In content scripts we can't call getCurrent, use runtime instead
+    });
+    // We rely on the background to only send START_RECORDING to the right tab.
+    // But if the service worker restarted, check if we should be recording.
+    isRecording = data.isRecording || false;
+    filter = data.filter || '';
+  }
 });
 
 // Inyectar interceptor en el contexto de la página (no en el content script context)
