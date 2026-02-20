@@ -1,0 +1,200 @@
+# 🔬 API Reverse Engineer — Chrome Extension
+
+> Capture every API call on any website — fetch + XHR — while you browse normally. Perfect for reverse engineering undocumented APIs.
+
+![Version](https://img.shields.io/badge/version-1.1.0-22c55e)
+![Manifest](https://img.shields.io/badge/manifest-v3-3b82f6)
+![License](https://img.shields.io/badge/license-MIT-94a3b8)
+
+---
+
+## What It Does
+
+Instead of digging through DevTools Network tab, this extension gives you a clean one-click recording experience:
+
+1. Open the extension on any tab
+2. Set an optional URL filter (e.g. `api.mysite.com`)
+3. Click **Start Recording**
+4. Use the website as you normally would
+5. Click **Stop → Download JSON**
+
+You get a clean JSON file with every unique endpoint captured — methods, headers, request bodies, response bodies, status codes, and timing.
+
+**Recording is scoped to the active tab only.** Other tabs are not affected.
+
+---
+
+## Screenshots
+
+<!-- Add screenshots here -->
+
+---
+
+## Installation
+
+### From Source (Developer Mode)
+
+1. Clone or download this repository
+2. Open Chrome → `chrome://extensions/`
+3. Enable **Developer Mode** (toggle in top-right corner)
+4. Click **Load unpacked** → select the project folder
+5. The 🟢 icon appears in your Chrome toolbar
+
+> Firefox support is planned (Manifest V3 with minor adjustments).
+
+---
+
+## Usage
+
+### Basic
+
+1. Navigate to the website you want to analyze
+2. Click the extension icon in the toolbar
+3. *(Optional)* Enter a URL filter to narrow captures:
+   - `api2.skool.com` — only calls to this domain
+   - `/api/v1` — only paths containing this string
+   - `graphql` — only GraphQL requests
+4. Click **▶ Start**
+5. The badge shows live request count
+6. Click **⏹ Stop** when done
+7. Click **⬇ Download JSON** to save the capture file
+
+### Output File
+
+The downloaded file is named `api-capture-{hostname}-{timestamp}.json`:
+
+```json
+{
+  "meta": {
+    "capturedAt": "2026-02-20T14:32:00.000Z",
+    "total": 47,
+    "uniqueEndpoints": 23,
+    "site": "www.skool.com"
+  },
+  "endpoints": [
+    {
+      "type": "fetch",
+      "method": "POST",
+      "url": "https://api2.skool.com/posts",
+      "requestHeaders": {
+        "content-type": "application/json",
+        "x-aws-waf-token": "..."
+      },
+      "requestBody": {
+        "title": "Test post",
+        "body": "Hello world"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "abc123",
+        "created_at": "2026-02-20T14:32:01Z"
+      },
+      "duration": 142,
+      "timestamp": "2026-02-20T14:32:00.000Z",
+      "isNewEndpoint": true
+    }
+  ],
+  "all": [...]
+}
+```
+
+**`endpoints`** — deduplicated list (one entry per unique `METHOD:URL` pair)  
+**`all`** — every single request captured, including repeated calls
+
+---
+
+## Features
+
+- ✅ Intercepts **fetch** and **XHR** requests
+- ✅ Captures request headers, body, response headers, response body
+- ✅ **Tab-scoped recording** — only captures from the tab where you clicked Start
+- ✅ Live counter badge on the extension icon
+- ✅ Optional **URL filter** to reduce noise
+- ✅ Deduplication — `endpoints` array has one entry per unique endpoint
+- ✅ Works on any website, any protocol
+- ✅ Clean dark-mode popup UI
+- ✅ **Clear** button to reset captures
+- ✅ Manifest V3 (modern Chrome extension standard)
+
+---
+
+## Use Cases
+
+- **Reverse engineering private APIs** — document undocumented endpoints
+- **Building integrations** — understand the exact payloads a web app sends
+- **API documentation** — auto-generate docs for internal apps
+- **Security research** — understand what data a site is sending
+- **Learning** — see how modern web apps communicate with their backends
+
+---
+
+## How It Works
+
+The extension uses a 3-layer architecture to capture requests in the page's actual execution context:
+
+```
+content.js (extension context)
+    └── injects → injected.js (page context)
+                      ├── Patches window.fetch
+                      └── Patches window.XMLHttpRequest
+
+injected.js → dispatches CustomEvent('__ARE_REQUEST__')
+    └── content.js listens → forwards to background.js
+                                  └── Stores + counts + updates badge
+```
+
+**Why the injection layer?** Chrome extensions run in an isolated context and can't directly access the page's `fetch`. By injecting a `<script>` tag, `injected.js` runs in the page's own JavaScript environment and can intercept real network calls.
+
+---
+
+## File Structure
+
+```
+api-reverse-engineer-extension/
+├── manifest.json          # Extension config (Manifest V3)
+├── popup.html             # Popup UI
+├── src/
+│   ├── popup.js           # Popup logic
+│   ├── background.js      # Service worker (stores captures, manages state)
+│   ├── content.js         # Content script (bridge between page and extension)
+│   └── injected.js        # Page-context script (intercepts fetch + XHR)
+├── icons/
+│   ├── icon16.png
+│   ├── icon48.png
+│   └── icon128.png
+└── README.md
+```
+
+---
+
+## Roadmap
+
+- [ ] Firefox support (WebExtensions API)
+- [ ] Export as OpenAPI / Swagger spec
+- [ ] Copy individual endpoint as cURL command
+- [ ] Response diffing (detect API changes over time)
+- [ ] Replay captured requests
+- [ ] HAR import/export compatibility
+- [ ] Regex URL filter support
+
+---
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Commit your changes: `git commit -m 'Add my feature'`
+4. Push: `git push origin feature/my-feature`
+5. Open a Pull Request
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+Built by [@ctala](https://github.com/ctala) · [cristiantala.com](https://cristiantala.com)

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API Reverse Engineer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 320px;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+
+    .header {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    .header h1 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #94a3b8;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .header .subtitle {
+      font-size: 11px;
+      color: #475569;
+      margin-top: 2px;
+    }
+
+    .stats {
+      display: flex;
+      gap: 12px;
+      padding: 10px 16px;
+      background: #0f172a;
+    }
+
+    .stat {
+      flex: 1;
+      text-align: center;
+      background: #1e293b;
+      border-radius: 8px;
+      padding: 8px 4px;
+    }
+
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #22c55e;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .filter-section {
+      padding: 10px 16px 0;
+    }
+
+    .filter-section label {
+      font-size: 11px;
+      color: #64748b;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .filter-input {
+      width: 100%;
+      padding: 7px 10px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .filter-input:focus {
+      border-color: #22c55e;
+    }
+
+    .filter-input::placeholder {
+      color: #475569;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      padding: 10px 16px;
+    }
+
+    button {
+      flex: 1;
+      padding: 9px 12px;
+      border: none;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    button:hover { opacity: 0.85; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #btnRecord {
+      background: #22c55e;
+      color: #fff;
+    }
+
+    #btnRecord.recording {
+      background: #ef4444;
+    }
+
+    #btnDownload {
+      background: #3b82f6;
+      color: #fff;
+    }
+
+    #btnClear {
+      background: #334155;
+      color: #94a3b8;
+      flex: 0 0 auto;
+      padding: 9px 10px;
+    }
+
+    .preview {
+      padding: 0 16px 10px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    .preview-title {
+      font-size: 10px;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .endpoint {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 0;
+      border-bottom: 1px solid #1e293b;
+      font-size: 11px;
+    }
+
+    .endpoint:last-child { border-bottom: none; }
+
+    .method {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 4px;
+      min-width: 36px;
+      text-align: center;
+    }
+
+    .method.GET { background: #1d4ed8; color: #bfdbfe; }
+    .method.POST { background: #15803d; color: #bbf7d0; }
+    .method.PUT, .method.PATCH { background: #b45309; color: #fde68a; }
+    .method.DELETE { background: #b91c1c; color: #fecaca; }
+
+    .endpoint-url {
+      flex: 1;
+      color: #94a3b8;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #22c55e;
+      flex-shrink: 0;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 16px;
+      color: #475569;
+      font-size: 12px;
+    }
+
+    .recording-indicator {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 16px;
+      background: #1a1a1a;
+      border-top: 1px solid #1e293b;
+      font-size: 11px;
+      color: #ef4444;
+    }
+
+    .recording-indicator.active {
+      display: flex;
+    }
+
+    .pulse {
+      width: 7px;
+      height: 7px;
+      background: #ef4444;
+      border-radius: 50%;
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🔬 API Reverse Engineer</h1>
+    <div class="subtitle">Captura requests en cualquier sitio</div>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-value" id="totalCount">0</div>
+      <div class="stat-label">Requests</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="uniqueCount">0</div>
+      <div class="stat-label">Únicos</div>
+    </div>
+  </div>
+
+  <div class="filter-section">
+    <label>Filtrar por URL (opcional)</label>
+    <input
+      type="text"
+      id="filterInput"
+      class="filter-input"
+      placeholder="ej: api2.skool.com, /api/v1, graphql"
+    />
+  </div>
+
+  <div class="actions">
+    <button id="btnRecord">▶ Iniciar</button>
+    <button id="btnDownload" disabled>⬇ Descargar JSON</button>
+    <button id="btnClear" title="Limpiar">🗑</button>
+  </div>
+
+  <div class="recording-indicator" id="recordingIndicator">
+    <div class="pulse"></div>
+    Grabando...
+  </div>
+
+  <div class="preview" id="preview">
+    <div class="preview-title">Endpoints capturados</div>
+    <div id="endpointList">
+      <div class="empty-state">Presiona Iniciar y usa el sitio normalmente</div>
+    </div>
+  </div>
+
+  <script src="src/popup.js"></script>
+</body>
+</html>
