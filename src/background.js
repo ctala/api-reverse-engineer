@@ -74,12 +74,18 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     chrome.storage.session.set({ isRecording: true, filter, recordingTabId, captured: [], uniqueKeys: [] });
     chrome.storage.local.set({ filter });
 
-    // Notificar SOLO al tab activo
+    // Set badge immediately to show recording started
     if (recordingTabId) {
+      chrome.action.setBadgeText({ text: '●', tabId: recordingTabId });
+      chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: recordingTabId });
+      
+      // Notificar al tab activo
       chrome.tabs.sendMessage(recordingTabId, {
         type: 'START_RECORDING',
         filter
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn('[ARE] Failed to send START_RECORDING to tab', recordingTabId, err);
+      });
     }
 
     respond({ ok: true });
