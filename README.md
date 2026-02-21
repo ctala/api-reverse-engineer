@@ -2,6 +2,8 @@
 
 > Capture every API call on any website — fetch + XHR — while you browse normally. Perfect for reverse engineering undocumented APIs.
 
+Built by [@ctala](https://github.com/ctala) | 🌐 [cristiantala.com](https://cristiantala.com)
+
 ![Version](https://img.shields.io/badge/version-1.2.3-22c55e)
 ![Manifest](https://img.shields.io/badge/manifest-v3-3b82f6)
 ![License](https://img.shields.io/badge/license-MIT-94a3b8)
@@ -30,15 +32,15 @@ You get a clean JSON file with every unique endpoint captured — methods, heade
 
 ---
 
-## Installation
+## 📥 Installation
 
-### From Chrome Web Store
+### From Chrome Web Store (Recommended)
 
 Get the extension directly from the Chrome Web Store:
 
 🔗 **[Install from Chrome Web Store](https://chrome.google.com/webstore/detail/api-reverse-engineer/PLACEHOLDER_ID)**
 
-> Coming soon! In the meantime, use the developer mode installation below.
+> **Privacy-First:** Zero tracking, zero analytics, zero external servers. [Read our Privacy Policy](https://github.com/ctala/api-reverse-engineer/blob/main/PRIVACY-POLICY.md)
 
 ### From Source (Developer Mode)
 
@@ -244,14 +246,28 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-## About
+## 👤 About
 
-**API Reverse Engineer** is maintained with ❤️ for developers who need to understand APIs.
+**API Reverse Engineer** is maintained with ❤️ by **[Cristian Tala](https://cristiantala.com)** — a developer, entrepreneur, and automation enthusiast.
 
-- Built by [@ctala](https://github.com/ctala)
-- 🌐 [cristiantala.com](https://cristiantala.com)
-- 📦 [GitHub Repository](https://github.com/ctala/api-reverse-engineer)
+**Connect:**
+- 🌐 **Website:** [cristiantala.com](https://cristiantala.com)
+- 💼 **LinkedIn:** [@cristiantala](https://linkedin.com/in/cristiantala)
+- 🐙 **GitHub:** [@ctala](https://github.com/ctala)
+- 📦 **Repository:** [github.com/ctala/api-reverse-engineer](https://github.com/ctala/api-reverse-engineer)
 
 ---
 
-*If you find this extension useful, please star ⭐ the repository and leave a review on the Chrome Web Store!*
+### Support & Feedback
+
+Found a bug? Have a feature request?  
+**[Open an issue on GitHub](https://github.com/ctala/api-reverse-engineer/issues)**
+
+If you find this extension useful, please:
+- ⭐ **Star the repository** on GitHub
+- 🌟 **Leave a review** on the Chrome Web Store
+- 🔗 **Share** with fellow developers
+
+---
+
+*Privacy Policy: [Read here](PRIVACY-POLICY.md) | All data stays on your device.*
