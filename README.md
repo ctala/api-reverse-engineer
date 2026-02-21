@@ -2,7 +2,7 @@
 
 > Capture every API call on any website — fetch + XHR — while you browse normally. Perfect for reverse engineering undocumented APIs.
 
-![Version](https://img.shields.io/badge/version-1.1.0-22c55e)
+![Version](https://img.shields.io/badge/version-1.2.3-22c55e)
 ![Manifest](https://img.shields.io/badge/manifest-v3-3b82f6)
 ![License](https://img.shields.io/badge/license-MIT-94a3b8)
 
@@ -32,6 +32,14 @@ You get a clean JSON file with every unique endpoint captured — methods, heade
 
 ## Installation
 
+### From Chrome Web Store
+
+Get the extension directly from the Chrome Web Store:
+
+🔗 **[Install from Chrome Web Store](https://chrome.google.com/webstore/detail/api-reverse-engineer/PLACEHOLDER_ID)**
+
+> Coming soon! In the meantime, use the developer mode installation below.
+
 ### From Source (Developer Mode)
 
 1. Clone or download this repository
@@ -41,6 +49,37 @@ You get a clean JSON file with every unique endpoint captured — methods, heade
 5. The 🟢 icon appears in your Chrome toolbar
 
 > Firefox support is planned (Manifest V3 with minor adjustments).
+
+---
+
+## Changelog
+
+### v1.2.3 (2026-02-20)
+**Fixed:**
+- CSP bypass for ultra-strict sites (Skool, etc.) — now uses `chrome.scripting.executeScript` with `world: 'MAIN'` instead of DOM script injection
+- Works on any site regardless of Content Security Policy
+
+### v1.2.2 (2026-02-20)
+**Fixed:**
+- CSP violation on strict sites (now injects via `<script src>` instead of inline)
+- Storage access error in content script (removed premature `chrome.storage.session.get()`)
+- Undefined `isRecording` crash (simplified state management — only background controls state)
+
+### v1.2.1 (2026-02-20)
+**Fixed:**
+- Service worker persistence (state now saved to `chrome.storage.session`)
+
+### v1.1.0 (2026-02-20)
+**Added:**
+- Tab-scoped recording (only captures in the tab where you clicked Start)
+
+### v1.0.0 (2026-02-20)
+**Initial release:**
+- fetch + XHR interception
+- Live badge counter
+- URL filtering
+- Deduplication by endpoint
+- JSON download
 
 ---
 
@@ -191,10 +230,28 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
+## Privacy & Security
+
+Your data stays on your device. **No tracking, no analytics, no external requests.**
+
+📋 [Read our Privacy Policy](PRIVACY-POLICY.md) | 🌐 [Hosted version](https://cristiantala.com/privacy/api-reverse-engineer/)
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
 ---
 
-Built by [@ctala](https://github.com/ctala) · [cristiantala.com](https://cristiantala.com)
+## About
+
+**API Reverse Engineer** is maintained with ❤️ for developers who need to understand APIs.
+
+- Built by [@ctala](https://github.com/ctala)
+- 🌐 [cristiantala.com](https://cristiantala.com)
+- 📦 [GitHub Repository](https://github.com/ctala/api-reverse-engineer)
+
+---
+
+*If you find this extension useful, please star ⭐ the repository and leave a review on the Chrome Web Store!*
