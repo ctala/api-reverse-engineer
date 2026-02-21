@@ -252,7 +252,7 @@ MIT — see [LICENSE](LICENSE).
 
 **Connect:**
 - 🌐 **Website:** [cristiantala.com](https://cristiantala.com)
-- 💼 **LinkedIn:** [@cristiantala](https://linkedin.com/in/cristiantala)
+- 💼 **LinkedIn:** [@ctala](https://linkedin.com/in/ctala)
 - 🐙 **GitHub:** [@ctala](https://github.com/ctala)
 - 📦 **Repository:** [github.com/ctala/api-reverse-engineer](https://github.com/ctala/api-reverse-engineer)
 

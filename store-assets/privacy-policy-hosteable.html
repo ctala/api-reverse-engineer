@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - API Reverse Engineer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f9f9f9;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    h1 {
+      color: #22c55e;
+      margin-bottom: 10px;
+      font-size: 2.5em;
+    }
+    
+    .meta {
+      color: #888;
+      font-size: 0.9em;
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #eee;
+    }
+    
+    h2 {
+      color: #1a1a1a;
+      margin-top: 30px;
+      margin-bottom: 15px;
+      font-size: 1.5em;
+      border-left: 4px solid #22c55e;
+      padding-left: 15px;
+    }
+    
+    h3 {
+      color: #333;
+      margin-top: 20px;
+      margin-bottom: 10px;
+      font-size: 1.1em;
+    }
+    
+    p {
+      margin-bottom: 15px;
+      text-align: justify;
+    }
+    
+    .summary {
+      background: #f0fdf4;
+      border-left: 4px solid #22c55e;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 4px;
+      font-weight: 500;
+      font-size: 1.05em;
+    }
+    
+    ul, ol {
+      margin-left: 20px;
+      margin-bottom: 15px;
+    }
+    
+    li {
+      margin-bottom: 8px;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+    
+    th {
+      background: #f0f0f0;
+      color: #333;
+      padding: 12px;
+      text-align: left;
+      border-bottom: 2px solid #ddd;
+      font-weight: 600;
+    }
+    
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+    }
+    
+    tr:hover {
+      background: #fafafa;
+    }
+    
+    .check {
+      color: #22c55e;
+      font-weight: bold;
+    }
+    
+    .cross {
+      color: #ef4444;
+      font-weight: bold;
+    }
+    
+    code {
+      background: #f5f5f5;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.9em;
+    }
+    
+    .box {
+      background: #eff6ff;
+      border-left: 4px solid #3b82f6;
+      padding: 15px;
+      margin: 15px 0;
+      border-radius: 4px;
+    }
+    
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #eee;
+      color: #888;
+      font-size: 0.9em;
+      text-align: center;
+    }
+    
+    a {
+      color: #22c55e;
+      text-decoration: none;
+    }
+    
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔐 Privacy Policy</h1>
+    <h2>API Reverse Engineer</h2>
+    
+    <div class="meta">
+      <strong>Effective Date:</strong> February 2026<br>
+      <strong>Last Updated:</strong> February 21, 2026
+    </div>
+    
+    <div class="summary">
+      <strong>Our commitment:</strong> API Reverse Engineer is a <strong>privacy-first</strong> extension. We collect zero data. All API captures happen locally on your device and never leave your browser.
+    </div>
+    
+    <h2>What We Collect</h2>
+    <p><strong>Nothing.</strong></p>
+    <p>This extension:</p>
+    <ul>
+      <li><span class="cross">❌</span> Does NOT send data to any external server</li>
+      <li><span class="cross">❌</span> Does NOT use analytics or tracking</li>
+      <li><span class="cross">❌</span> Does NOT store data in cloud services</li>
+      <li><span class="cross">❌</span> Does NOT require account login</li>
+      <li><span class="cross">❌</span> Does NOT use cookies</li>
+      <li><span class="cross">❌</span> Does NOT log user behavior</li>
+    </ul>
+    
+    <h2>How It Works</h2>
+    <p>All API capture and processing happens <strong>entirely on your device:</strong></p>
+    
+    <h3>1. Content Script</h3>
+    <p>Runs in your browser context and intercepts network requests from the page you're visiting. Listens to fetch and XHR events.</p>
+    
+    <h3>2. Background Service Worker</h3>
+    <p>Local to your browser. Stores captures in <code>chrome.storage.session</code>, computes statistics, and updates the extension badge.</p>
+    
+    <h3>3. Popup UI</h3>
+    <p>Displays captured data, generates JSON exports. All processing happens in-browser.</p>
+    
+    <p style="margin-top: 20px;"><strong>No external calls are made at any point.</strong></p>
+    
+    <h2>Data You Generate</h2>
+    <p>When you download a capture, you get a JSON file that includes:</p>
+    <ul>
+      <li>Request methods, URLs, headers, request bodies</li>
+      <li>Response status codes, bodies, timing info</li>
+      <li>Timestamp of capture</li>
+      <li>Site domain where capture occurred</li>
+    </ul>
+    <p><strong>This file is yours.</strong> You can delete it anytime. We never see it.</p>
+    
+    <h2>Permissions We Request</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Permission</th>
+          <th>Why We Need It</th>
+          <th>Sensitive?</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>&lt;all_urls&gt;</code></td>
+          <td>To intercept API calls on any website</td>
+          <td>Yes, but strictly local</td>
+        </tr>
+        <tr>
+          <td><code>tabs</code></td>
+          <td>To identify which tab is recording</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td><code>activeTab</code></td>
+          <td>To scope recording to active tab only</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td><code>storage</code></td>
+          <td>To store session captures temporarily</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td><code>scripting</code></td>
+          <td>To inject interceptor code into pages</td>
+          <td>No</td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <div class="box">
+      <strong>Important:</strong> These permissions are only used locally. We never collect, transmit, or log any data.
+    </div>
+    
+    <h2>Retention & Deletion</h2>
+    <ul>
+      <li>Captures are stored in <code>chrome.storage.session</code> only</li>
+      <li>Cleared automatically when you close the tab or browser session</li>
+      <li>You control deletion via the "Clear" button in the extension popup</li>
+      <li>Downloaded JSON files are stored only on your computer</li>
+    </ul>
+    
+    <h2>Third-Party Services</h2>
+    <p><strong>None.</strong> This extension uses:</p>
+    <ul>
+      <li><span class="check">✅</span> Only Chrome APIs (built-in, no external calls)</li>
+      <li><span class="check">✅</span> JavaScript (vanilla, no frameworks)</li>
+      <li><span class="check">✅</span> Your browser's native fetch/XHR interception</li>
+    </ul>
+    <p>No third-party libraries, no external API calls, no CDN resources.</p>
+    
+    <h2>Changes to This Policy</h2>
+    <p>We may update this policy occasionally. Any changes will be reflected here with an updated "Last Updated" date.</p>
+    
+    <h2>Contact</h2>
+    <p>Questions about privacy? Please open an issue on GitHub:<br>
+    <a href="https://github.com/ctala/api-reverse-engineer/issues" target="_blank">github.com/ctala/api-reverse-engineer/issues</a></p>
+    <p>Or email: privacy@cristiantala.com</p>
+    
+    <h2>Legal</h2>
+    <p>This extension is provided "as is" without any warranty. By using it, you agree to the <a href="https://github.com/ctala/api-reverse-engineer/blob/main/LICENSE" target="_blank">MIT License</a>.</p>
+    
+    <div style="text-align: center; margin-top: 40px; padding: 20px; background: #f0fdf4; border-radius: 8px;">
+      <strong style="font-size: 1.1em; color: #22c55e;">We respect your privacy. Period.</strong>
+    </div>
+    
+    <div class="footer">
+      <p>Last updated February 21, 2026</p>
+      <p><a href="https://cristiantala.com">cristiantala.com</a> · <a href="https://github.com/ctala/api-reverse-engineer">GitHub</a></p>
+    </div>
+  </div>
+</body>
+</html>
