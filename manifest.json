@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "API Reverse Engineer",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Captura todas las llamadas API mientras navegas. Record \u2192 usa el sitio \u2192 descarga JSON.",
   "permissions": [
     "storage",

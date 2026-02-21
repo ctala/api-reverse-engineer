@@ -79,12 +79,23 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
       chrome.action.setBadgeText({ text: '●', tabId: recordingTabId });
       chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: recordingTabId });
       
-      // Notificar al tab activo
-      chrome.tabs.sendMessage(recordingTabId, {
-        type: 'START_RECORDING',
-        filter
+      // Inject interceptor script into MAIN world (bypasses CSP)
+      chrome.scripting.executeScript({
+        target: { tabId: recordingTabId },
+        world: 'MAIN',
+        files: ['src/injected.js']
+      }).then(() => {
+        console.log('[ARE] Interceptor injected via chrome.scripting');
+        
+        // Now notify content script to start filtering
+        chrome.tabs.sendMessage(recordingTabId, {
+          type: 'START_RECORDING',
+          filter
+        }).catch((err) => {
+          console.warn('[ARE] Failed to send START_RECORDING to tab', recordingTabId, err);
+        });
       }).catch((err) => {
-        console.warn('[ARE] Failed to send START_RECORDING to tab', recordingTabId, err);
+        console.error('[ARE] Failed to inject interceptor:', err);
       });
     }
 

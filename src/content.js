@@ -12,46 +12,26 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   if (msg.type === 'START_RECORDING') {
     isRecording = true;
     filter = msg.filter || '';
+    console.log('[ARE Content] Recording started, filter:', filter);
     respond({ ok: true });
   }
   if (msg.type === 'STOP_RECORDING') {
     isRecording = false;
+    console.log('[ARE Content] Recording stopped');
     respond({ ok: true });
   }
   if (msg.type === 'GET_STATUS') {
     respond({ isRecording, filter });
   }
-});
-
-// Restore recording state on page load (survives SPA navigation + SW restarts)
-chrome.storage.session.get(['isRecording', 'filter', 'recordingTabId'], (data) => {
-  if (data.isRecording) {
-    // Only activate recording if this tab is the one that started it
-    chrome.tabs.getCurrent?.((tab) => {
-      // In content scripts we can't call getCurrent, use runtime instead
-    });
-    // We rely on the background to only send START_RECORDING to the right tab.
-    // But if the service worker restarted, check if we should be recording.
-    isRecording = data.isRecording || false;
-    filter = data.filter || '';
+  if (msg.type === 'INJECT_NOW') {
+    // Background will inject via chrome.scripting.executeScript
+    // This message is just to confirm content script is ready
+    respond({ ok: true });
   }
 });
 
-// Inyectar interceptor inline (evita CSP blocks)
-async function injectInterceptor() {
-  try {
-    const response = await fetch(chrome.runtime.getURL('src/injected.js'));
-    const scriptText = await response.text();
-    const script = document.createElement('script');
-    script.textContent = scriptText;
-    (document.head || document.documentElement).appendChild(script);
-    script.remove();
-    console.log('[ARE Content] Interceptor injected');
-  } catch (err) {
-    console.error('[ARE Content] Failed to inject interceptor:', err);
-  }
-}
-injectInterceptor();
+console.log('[ARE Content] Content script loaded');
+// No inyectamos aquí — el background lo hará via chrome.scripting (bypasea CSP)
 
 // Recibir datos del injected script via window events
 window.addEventListener('__ARE_REQUEST__', (event) => {
