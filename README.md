@@ -38,7 +38,7 @@ You get a clean JSON file with every unique endpoint captured — methods, heade
 
 Get the extension directly from the Chrome Web Store:
 
-🔗 **[Install from Chrome Web Store](https://chrome.google.com/webstore/detail/api-reverse-engineer/PLACEHOLDER_ID)**
+🔗 **[Install from Chrome Web Store](https://chromewebstore.google.com/detail/dhpkbbfammoldcjhnngopbipkfmlpnej)**
 
 > **Privacy-First:** Zero tracking, zero analytics, zero external servers. [Read our Privacy Policy](https://github.com/ctala/api-reverse-engineer/blob/main/PRIVACY-POLICY.md)
 
