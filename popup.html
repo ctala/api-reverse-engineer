@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -229,46 +229,47 @@
 </head>
 <body>
   <div class="header">
-    <h1>🔬 API Reverse Engineer</h1>
-    <div class="subtitle">Captura requests en cualquier sitio</div>
+    <h1>🔬 <span data-i18n="popupTitle">API Reverse Engineer</span></h1>
+    <div class="subtitle" data-i18n="popupSubtitle">Capture requests on any site</div>
   </div>
 
   <div class="stats">
     <div class="stat">
       <div class="stat-value" id="totalCount">0</div>
-      <div class="stat-label">Requests</div>
+      <div class="stat-label" data-i18n="statRequests">Requests</div>
     </div>
     <div class="stat">
       <div class="stat-value" id="uniqueCount">0</div>
-      <div class="stat-label">Únicos</div>
+      <div class="stat-label" data-i18n="statUnique">Unique</div>
     </div>
   </div>
 
   <div class="filter-section">
-    <label>Filtrar por URL (opcional)</label>
+    <label data-i18n="filterLabel">Filter by URL (optional)</label>
     <input
       type="text"
       id="filterInput"
       class="filter-input"
-      placeholder="ej: api2.skool.com, /api/v1, graphql"
+      data-i18n-placeholder="filterPlaceholder"
+      placeholder="e.g. api2.skool.com, /api/v1, graphql"
     />
   </div>
 
   <div class="actions">
-    <button id="btnRecord">▶ Iniciar</button>
-    <button id="btnDownload" disabled>⬇ Descargar JSON</button>
-    <button id="btnClear" title="Limpiar">🗑</button>
+    <button id="btnRecord" data-i18n="btnStart">▶ Start</button>
+    <button id="btnDownload" disabled data-i18n="btnDownload">⬇ Download JSON</button>
+    <button id="btnClear" data-i18n-title="btnClearTitle" title="Clear">🗑</button>
   </div>
 
   <div class="recording-indicator" id="recordingIndicator">
     <div class="pulse"></div>
-    Grabando...
+    <span data-i18n="recordingIndicator">Recording...</span>
   </div>
 
   <div class="preview" id="preview">
-    <div class="preview-title">Endpoints capturados</div>
+    <div class="preview-title" data-i18n="endpointsCapturedTitle">Captured endpoints</div>
     <div id="endpointList">
-      <div class="empty-state">Presiona Iniciar y usa el sitio normalmente</div>
+      <div class="empty-state" data-i18n="emptyState">Press Start and use the site normally</div>
     </div>
   </div>
 

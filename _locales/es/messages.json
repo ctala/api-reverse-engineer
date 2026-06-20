@@ -1,0 +1,59 @@
+{
+  "extName": {
+    "message": "API Reverse Engineer"
+  },
+  "extDescription": {
+    "message": "Captura todas las llamadas API mientras navegas. Record → usa el sitio → descarga JSON."
+  },
+  "popupTitle": {
+    "message": "API Reverse Engineer"
+  },
+  "popupSubtitle": {
+    "message": "Captura requests en cualquier sitio"
+  },
+  "statRequests": {
+    "message": "Requests"
+  },
+  "statUnique": {
+    "message": "Únicos"
+  },
+  "filterLabel": {
+    "message": "Filtrar por URL (opcional)"
+  },
+  "filterPlaceholder": {
+    "message": "ej: api2.skool.com, /api/v1, graphql"
+  },
+  "btnStart": {
+    "message": "▶ Iniciar"
+  },
+  "btnStop": {
+    "message": "⏹ Detener"
+  },
+  "btnDownload": {
+    "message": "⬇ Descargar JSON"
+  },
+  "btnClearTitle": {
+    "message": "Limpiar"
+  },
+  "recordingIndicator": {
+    "message": "Grabando..."
+  },
+  "endpointsCapturedTitle": {
+    "message": "Endpoints capturados"
+  },
+  "emptyState": {
+    "message": "Presiona Iniciar y usa el sitio normalmente"
+  },
+  "recordingOnTab": {
+    "message": "Grabando en"
+  },
+  "useTheSiteNormally": {
+    "message": "Usa el sitio normalmente"
+  },
+  "currentTabFallback": {
+    "message": "tab actual"
+  },
+  "confirmClearData": {
+    "message": "¿Limpiar todos los datos capturados?"
+  }
+}

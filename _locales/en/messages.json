@@ -1,0 +1,59 @@
+{
+  "extName": {
+    "message": "API Reverse Engineer"
+  },
+  "extDescription": {
+    "message": "Capture every API call as you browse. Record → use the site → download JSON."
+  },
+  "popupTitle": {
+    "message": "API Reverse Engineer"
+  },
+  "popupSubtitle": {
+    "message": "Capture requests on any site"
+  },
+  "statRequests": {
+    "message": "Requests"
+  },
+  "statUnique": {
+    "message": "Unique"
+  },
+  "filterLabel": {
+    "message": "Filter by URL (optional)"
+  },
+  "filterPlaceholder": {
+    "message": "e.g. api2.skool.com, /api/v1, graphql"
+  },
+  "btnStart": {
+    "message": "▶ Start"
+  },
+  "btnStop": {
+    "message": "⏹ Stop"
+  },
+  "btnDownload": {
+    "message": "⬇ Download JSON"
+  },
+  "btnClearTitle": {
+    "message": "Clear"
+  },
+  "recordingIndicator": {
+    "message": "Recording..."
+  },
+  "endpointsCapturedTitle": {
+    "message": "Captured endpoints"
+  },
+  "emptyState": {
+    "message": "Press Start and use the site normally"
+  },
+  "recordingOnTab": {
+    "message": "Recording on"
+  },
+  "useTheSiteNormally": {
+    "message": "Use the site normally"
+  },
+  "currentTabFallback": {
+    "message": "current tab"
+  },
+  "confirmClearData": {
+    "message": "Clear all captured data?"
+  }
+}

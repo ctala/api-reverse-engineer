@@ -4,7 +4,7 @@
 
 Built by [@ctala](https://github.com/ctala) | 🌐 [cristiantala.com](https://cristiantala.com)
 
-![Version](https://img.shields.io/badge/version-1.2.3-22c55e)
+![Version](https://img.shields.io/badge/version-1.3.0-22c55e)
 ![Manifest](https://img.shields.io/badge/manifest-v3-3b82f6)
 ![License](https://img.shields.io/badge/license-MIT-94a3b8)
 
@@ -55,6 +55,12 @@ Get the extension directly from the Chrome Web Store:
 ---
 
 ## Changelog
+
+### v1.3.0 (2026-06-19)
+**Added:**
+- English locale — popup UI now follows `chrome.i18n` and the browser's language, with English and Spanish supported out of the box
+- `_locales/en` and `_locales/es` message catalogs
+- `default_locale` set in `manifest.json`
 
 ### v1.2.3 (2026-02-20)
 **Fixed:**

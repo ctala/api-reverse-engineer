@@ -13,7 +13,30 @@ const recordingIndicator = document.getElementById('recordingIndicator');
 
 let isRecording = false;
 
-// Cargar estado al abrir popup
+// Populate all [data-i18n] elements with the active locale's strings
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const key = el.getAttribute('data-i18n');
+    const msg = chrome.i18n.getMessage(key);
+    if (msg) el.textContent = msg;
+  });
+
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    const msg = chrome.i18n.getMessage(key);
+    if (msg) el.setAttribute('placeholder', msg);
+  });
+
+  document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+    const key = el.getAttribute('data-i18n-title');
+    const msg = chrome.i18n.getMessage(key);
+    if (msg) el.setAttribute('title', msg);
+  });
+
+  document.title = chrome.i18n.getMessage('popupTitle') || document.title;
+}
+
+// Load state on popup open
 function loadState() {
   chrome.runtime.sendMessage({ type: 'GET_STATE' }, (res) => {
     if (!res) return;
@@ -32,11 +55,11 @@ function updateUI(total, unique) {
   uniqueCount.textContent = unique || 0;
 
   if (isRecording) {
-    btnRecord.textContent = '⏹ Detener';
+    btnRecord.textContent = chrome.i18n.getMessage('btnStop');
     btnRecord.classList.add('recording');
     recordingIndicator.classList.add('active');
   } else {
-    btnRecord.textContent = '▶ Iniciar';
+    btnRecord.textContent = chrome.i18n.getMessage('btnStart');
     btnRecord.classList.remove('recording');
     recordingIndicator.classList.remove('active');
   }
@@ -46,7 +69,7 @@ function updateUI(total, unique) {
 
 function renderEndpoints(endpoints) {
   if (!endpoints || endpoints.length === 0) {
-    endpointList.innerHTML = '<div class="empty-state">Presiona Iniciar y usa el sitio normalmente</div>';
+    endpointList.innerHTML = `<div class="empty-state">${chrome.i18n.getMessage('emptyState')}</div>`;
     return;
   }
 
@@ -76,11 +99,11 @@ function refreshPreview() {
   });
 }
 
-// Botón Record / Stop
+// Record / Stop button
 btnRecord.addEventListener('click', async () => {
   if (!isRecording) {
     const filter = filterInput.value.trim();
-    // Obtener el tab activo para grabar solo en él
+    // Get the active tab so we only record on it
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabId = tab?.id || null;
 
@@ -88,9 +111,9 @@ btnRecord.addEventListener('click', async () => {
       isRecording = true;
       chrome.storage.local.set({ filter });
       updateUI(0, 0);
-      // Mostrar en qué tab está grabando
-      const hostname = tab?.url ? (() => { try { return new URL(tab.url).hostname; } catch { return tab.url; } })() : 'tab actual';
-      endpointList.innerHTML = `<div class="empty-state">Grabando en <strong style="color:#22c55e">${hostname}</strong><br>Usa el sitio normalmente</div>`;
+      // Show which tab it's recording on
+      const hostname = tab?.url ? (() => { try { return new URL(tab.url).hostname; } catch { return tab.url; } })() : chrome.i18n.getMessage('currentTabFallback');
+      endpointList.innerHTML = `<div class="empty-state">${chrome.i18n.getMessage('recordingOnTab')} <strong style="color:#22c55e">${hostname}</strong><br>${chrome.i18n.getMessage('useTheSiteNormally')}</div>`;
     });
   } else {
     chrome.runtime.sendMessage({ type: 'STOP' }, () => {
@@ -100,7 +123,7 @@ btnRecord.addEventListener('click', async () => {
   }
 });
 
-// Botón Descargar
+// Download button
 btnDownload.addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const site = tab?.url ? new URL(tab.url).hostname : 'unknown';
@@ -118,19 +141,20 @@ btnDownload.addEventListener('click', async () => {
   });
 });
 
-// Botón Limpiar
+// Clear button
 btnClear.addEventListener('click', () => {
-  if (!confirm('¿Limpiar todos los datos capturados?')) return;
+  if (!confirm(chrome.i18n.getMessage('confirmClearData'))) return;
   chrome.runtime.sendMessage({ type: 'CLEAR' }, () => {
     updateUI(0, 0);
-    endpointList.innerHTML = '<div class="empty-state">Presiona Iniciar y usa el sitio normalmente</div>';
+    endpointList.innerHTML = `<div class="empty-state">${chrome.i18n.getMessage('emptyState')}</div>`;
   });
 });
 
-// Auto-refresh mientras está grabando
+// Auto-refresh while recording
 setInterval(() => {
   if (isRecording) refreshPreview();
 }, 1500);
 
-// Iniciar
+// Start
+applyI18n();
 loadState();
