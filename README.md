@@ -4,7 +4,7 @@
 
 Built by [@ctala](https://github.com/ctala) | 🌐 [cristiantala.com](https://cristiantala.com)
 
-![Version](https://img.shields.io/badge/version-1.2.3-22c55e)
+![Version](https://img.shields.io/badge/version-1.3.0-22c55e)
 ![Manifest](https://img.shields.io/badge/manifest-v3-3b82f6)
 ![License](https://img.shields.io/badge/license-MIT-94a3b8)
 
@@ -55,6 +55,18 @@ Get the extension directly from the Chrome Web Store:
 ---
 
 ## Changelog
+
+### v1.3.0 (2026-06-23) — Capture Mode
+**Added:**
+- **Profile presets** — `[Generic]`, `[LinkedIn Voyager]`, `[GraphQL]`, `[JSON API]`. One-click pre-fill of URL filter and redact patterns.
+- **Multi-line URL filter** with AND/OR mode. Patterns can be literal, glob, or `/regex/`.
+- **Redact secrets toggle (default ON)** — cookies, CSRF tokens, auth headers, password / token body fields are replaced with `[REDACTED:<key>]` placeholders in the MAIN-world interceptor, before any serialization crosses a process boundary. The raw secret never appears in `postMessage`, `chrome.runtime.sendMessage`, `chrome.storage`, the popup preview, or the downloaded file.
+- **JSON-Lines export** (default) + legacy JSON array toggle. New schema documented in `docs/spec/capture-mode-spec.md`.
+- **5 MB body cap** + binary skip (`image/*`, `video/*`, `audio/*`, `application/pdf`, `application/octet-stream`) + 10,000-event per-session cap with auto-stop warning.
+- **Privacy** — updated `PRIVACY-POLICY.md` for v1.3.0 Capture Mode. Added sections on local data processing, user controls, and what is NOT captured. No changes to data flow. New `docs/spec/PRIVACY-COMPLIANCE-SUMMARY.md` for Chrome Web Store reviewers.
+
+**Not in this release:**
+- WebSocket capture, Service Worker internals, cross-origin iframes, replay, HAR import/export, redaction level slider — deferred to v1.4.
 
 ### v1.2.3 (2026-02-20)
 **Fixed:**
@@ -234,9 +246,9 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Privacy & Security
 
-Your data stays on your device. **No tracking, no analytics, no external requests.**
+Your data stays on your device. **No tracking, no analytics, no external requests.** v1.3.0 Capture Mode adds secret redaction in the page (cookies, CSRF tokens, and auth headers are replaced with placeholders before they ever leave the page), so even the in-memory capture buffer never contains raw secrets.
 
-📋 [Read our Privacy Policy](PRIVACY-POLICY.md) | 🌐 [Hosted version](https://cristiantala.com/privacy/api-reverse-engineer/)
+📋 [Privacy Policy](PRIVACY-POLICY.md) · [Compliance Summary (for reviewers)](docs/spec/PRIVACY-COMPLIANCE-SUMMARY.md) · 🌐 [Hosted version](https://cristiantala.com/privacy/api-reverse-engineer/)
 
 ---
 
