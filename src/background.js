@@ -1,55 +1,107 @@
 /**
- * API Reverse Engineer — Background Service Worker
- * Almacena los requests capturados, actualiza badge.
+ * API Reverse Engineer — Background Service Worker (v1.3.0)
+ * Almacena los requests capturados, actualiza badge, serializa a JSONL.
  *
- * IMPORTANT: Chrome kills service workers after ~30s of inactivity.
- * State that must survive restarts is persisted in chrome.storage.session.
- * In-memory captures are also saved to storage on every new entry.
+ * Capture Mode (v1.3.0):
+ *   - captureConfig (preset + filter + redact patterns) se persiste en
+ *     chrome.storage.session, igual que captured/uniqueKeys, para sobrevivir
+ *     el SW wake-up.
+ *   - DOWNLOAD_JSONL produce un archivo `.jsonl` (un evento por línea).
+ *   - DOWNLOAD (legacy) sigue produciendo el shape v1.2.3 {meta, endpoints, all}.
+ *   - Truncación: 5 MB por response body, binaries omitidos, 10k events cap.
  */
+
+const MAX_EVENTS = 10000;
+const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MB
+const WARNING_AT = 9000;
 
 let captured = [];
 let uniqueKeys = new Set();
 let isRecording = false;
 let recordingTabId = null;
+let captureConfig = null;
+let outputFormat = 'jsonl'; // 'jsonl' | 'json-array'
+let filterMode = 'OR';
 
 // Restore state when service worker wakes up
-chrome.storage.session.get(['isRecording', 'recordingTabId', 'captured', 'uniqueKeys'], (data) => {
-  if (data.isRecording) {
-    isRecording = data.isRecording;
-    recordingTabId = data.recordingTabId || null;
-    captured = data.captured || [];
-    uniqueKeys = new Set(data.uniqueKeys || []);
+chrome.storage.session.get(
+  ['isRecording', 'recordingTabId', 'captured', 'uniqueKeys', 'captureConfig', 'outputFormat', 'filterMode'],
+  (data) => {
+    if (data && data.isRecording) {
+      isRecording = data.isRecording;
+      recordingTabId = data.recordingTabId || null;
+      captured = Array.isArray(data.captured) ? data.captured : [];
+      uniqueKeys = new Set(Array.isArray(data.uniqueKeys) ? data.uniqueKeys : []);
+      captureConfig = data.captureConfig || null;
+      outputFormat = data.outputFormat || 'jsonl';
+      filterMode = data.filterMode || 'OR';
+    }
   }
-});
+);
+
+function _persistSession() {
+  try {
+    chrome.storage.session.set({
+      isRecording,
+      recordingTabId,
+      captured,
+      uniqueKeys: Array.from(uniqueKeys),
+      captureConfig,
+      outputFormat,
+      filterMode
+    });
+  } catch (e) {
+    console.error('[ARE] Failed to persist session:', e);
+  }
+}
 
 // Recibir captures desde content scripts
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 
   if (msg.type === 'CAPTURE') {
     // Solo capturar del tab donde se inició el recording
-    const tabId = sender.tab?.id;
+    const tabId = sender.tab && sender.tab.id;
     if (recordingTabId !== null && tabId !== recordingTabId) {
       respond({ ok: true });
       return true;
     }
 
     const entry = msg.entry;
-    const key = `${entry.method}:${entry.url.split('?')[0]}`;
+    if (!entry || !entry.url || !entry.method) {
+      respond({ ok: true });
+      return true;
+    }
+
+    // Apply 5MB body truncation + binary skip BEFORE storing. Doing it here
+    // keeps captured[] bounded regardless of what content.js sends.
+    const processed = _truncateEntry(entry);
+
+    const key = `${processed.method}:${processed.url.split('?')[0]}`;
     const isNew = !uniqueKeys.has(key);
     uniqueKeys.add(key);
 
-    captured.push({ ...entry, isNewEndpoint: isNew });
+    captured.push(Object.assign({}, processed, { isNewEndpoint: isNew }));
 
-    // Persist to session storage (survives service worker restarts)
-    chrome.storage.session.set({
-      captured,
-      uniqueKeys: [...uniqueKeys]
-    });
+    // Hard cap: auto-stop at MAX_EVENTS.
+    if (captured.length >= MAX_EVENTS) {
+      isRecording = false;
+      console.warn(`[ARE] Reached ${MAX_EVENTS} events, auto-stopping`);
+    }
+
+    _persistSession();
 
     // Actualizar badge solo en el tab grabando
     if (tabId) {
-      chrome.action.setBadgeText({ text: String(captured.length), tabId });
-      chrome.action.setBadgeBackgroundColor({ color: '#22c55e', tabId });
+      const text = captured.length >= WARNING_AT
+        ? `${captured.length}!`
+        : String(captured.length);
+      try {
+        chrome.action.setBadgeText({ text, tabId });
+        chrome.action.setBadgeBackgroundColor({
+          color: captured.length >= WARNING_AT ? '#f59e0b' : '#22c55e',
+          tabId
+        });
+      } catch (e) {}
     }
 
     respond({ ok: true });
@@ -61,7 +113,11 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
       isRecording,
       recordingTabId,
       total: captured.length,
-      unique: uniqueKeys.size
+      unique: uniqueKeys.size,
+      maxEvents: MAX_EVENTS,
+      warningAt: WARNING_AT,
+      outputFormat,
+      captureConfig
     });
     return true;
   }
@@ -69,33 +125,56 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   if (msg.type === 'START') {
     isRecording = true;
     recordingTabId = msg.tabId || null;
-    const filter = msg.filter || '';
-    // Use session storage so state survives service worker sleep/wake cycles
-    chrome.storage.session.set({ isRecording: true, filter, recordingTabId, captured: [], uniqueKeys: [] });
-    chrome.storage.local.set({ filter });
+    filter = msg.filter || '';
+    captureConfig = msg.captureConfig || null;
+    outputFormat = msg.outputFormat || 'jsonl';
+    filterMode = (captureConfig && captureConfig.filterMode) || 'OR';
+    // Reset captures — START begins a new session.
+    captured = [];
+    uniqueKeys = new Set();
+
+    _persistSession();
+
+    // Persist last user choice to local storage so the popup restores it.
+    chrome.storage.local.set({ filter, captureConfig, outputFormat, filterMode });
 
     // Set badge immediately to show recording started
     if (recordingTabId) {
-      chrome.action.setBadgeText({ text: '●', tabId: recordingTabId });
-      chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: recordingTabId });
-      
-      // Inject interceptor script into MAIN world (bypasses CSP)
+      try {
+        chrome.action.setBadgeText({ text: '●', tabId: recordingTabId });
+        chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: recordingTabId });
+      } catch (e) {}
+    }
+
+    // Inject interceptor scripts into MAIN world (in order: helpers, then
+    // interceptors so window.CaptureConfig is defined when injected.js runs).
+    if (recordingTabId) {
       chrome.scripting.executeScript({
         target: { tabId: recordingTabId },
         world: 'MAIN',
-        files: ['src/injected.js']
+        files: ['src/capture-config.js', 'src/injected.js']
       }).then(() => {
-        console.log('[ARE] Interceptor injected via chrome.scripting');
-        
-        // Now notify content script to start filtering
+        console.log('[ARE] Interceptors injected into MAIN world');
+
+        // Push captureConfig to content.js → injected.js BEFORE the first
+        // request fires. We do this via START_RECORDING + SET_CAPTURE_CONFIG.
         chrome.tabs.sendMessage(recordingTabId, {
           type: 'START_RECORDING',
           filter
         }).catch((err) => {
           console.warn('[ARE] Failed to send START_RECORDING to tab', recordingTabId, err);
         });
+
+        if (captureConfig) {
+          chrome.tabs.sendMessage(recordingTabId, {
+            type: 'SET_CAPTURE_CONFIG',
+            captureConfig
+          }).catch((err) => {
+            console.warn('[ARE] Failed to send SET_CAPTURE_CONFIG to tab', recordingTabId, err);
+          });
+        }
       }).catch((err) => {
-        console.error('[ARE] Failed to inject interceptor:', err);
+        console.error('[ARE] Failed to inject interceptors:', err);
       });
     }
 
@@ -105,12 +184,13 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 
   if (msg.type === 'STOP') {
     isRecording = false;
-    chrome.storage.session.set({ isRecording: false });
+    _persistSession();
 
-    // Notificar solo al tab que grababa
     if (recordingTabId) {
-      chrome.tabs.sendMessage(recordingTabId, { type: 'STOP_RECORDING' }).catch(() => {});
-      chrome.action.setBadgeText({ text: '', tabId: recordingTabId });
+      try {
+        chrome.tabs.sendMessage(recordingTabId, { type: 'STOP_RECORDING' }).catch(() => {});
+        chrome.action.setBadgeText({ text: '', tabId: recordingTabId });
+      } catch (e) {}
     }
     recordingTabId = null;
 
@@ -118,38 +198,60 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     return true;
   }
 
+  // -------------------------------------------------------------------------
+  // DOWNLOAD — JSONL (v1.3.0 default) or legacy JSON array (v1.2.3 shape)
+  // -------------------------------------------------------------------------
   if (msg.type === 'DOWNLOAD') {
-    // Crear objeto agrupado por endpoint único
-    const unique = {};
-    captured.forEach(r => {
-      const key = `${r.method}:${r.url.split('?')[0]}`;
-      if (!unique[key] || r.isNewEndpoint) unique[key] = r;
-    });
+    const format = msg.format || outputFormat || 'jsonl';
+    const site = msg.site || 'unknown';
+    const preset = (captureConfig && captureConfig.preset) || 'generic';
+    const isoStamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
 
-    const data = {
-      meta: {
-        capturedAt: new Date().toISOString(),
-        total: captured.length,
-        uniqueEndpoints: Object.keys(unique).length,
-        site: msg.site || 'unknown'
-      },
-      endpoints: Object.values(unique),
-      all: captured
-    };
+    if (format === 'json-array') {
+      // Legacy v1.2.3 shape: {meta, endpoints, all}.
+      const unique = {};
+      captured.forEach((r) => {
+        const key = `${r.method}:${r.url.split('?')[0]}`;
+        if (!unique[key] || r.isNewEndpoint) unique[key] = r;
+      });
+      const data = {
+        meta: {
+          capturedAt: new Date().toISOString(),
+          total: captured.length,
+          uniqueEndpoints: Object.keys(unique).length,
+          site,
+          preset
+        },
+        endpoints: Object.values(unique),
+        all: captured
+      };
+      respond({
+        data: JSON.stringify(data, null, 2),
+        filename: `api-capture-${preset}-${isoStamp}.json`,
+        format: 'json-array'
+      });
+      return true;
+    }
 
-    respond({ data: JSON.stringify(data, null, 2) });
+    // JSONL (v1.3.0 default): one event per line. Use responseBody which is
+    // already truncated to MAX_BODY_BYTES by _truncateEntry. Entries already
+    // come redacted from injected.js.
+    const lines = captured.map((entry) => _toJsonlLine(entry));
+    const data = lines.join('\n') + (lines.length > 0 ? '\n' : '');
+    const filename = `are-capture-${preset}-${isoStamp}.jsonl`;
+    respond({ data, filename, format: 'jsonl', lineCount: lines.length });
     return true;
   }
 
   if (msg.type === 'CLEAR') {
     captured = [];
     uniqueKeys = new Set();
-    chrome.storage.session.set({ captured: [], uniqueKeys: [] });
+    _persistSession();
 
     chrome.tabs.query({}, (tabs) => {
-      tabs.forEach(tab => {
+      tabs.forEach((tab) => {
         if (tab.id) {
-          chrome.action.setBadgeText({ text: '', tabId: tab.id });
+          try { chrome.action.setBadgeText({ text: '', tabId: tab.id }); } catch (e) {}
         }
       });
     });
@@ -159,13 +261,117 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   }
 
   if (msg.type === 'GET_PREVIEW') {
-    // Devuelve los últimos 20 endpoints únicos para preview
     const unique = {};
-    captured.forEach(r => {
+    captured.forEach((r) => {
       const key = `${r.method}:${r.url.split('?')[0]}`;
       if (!unique[key]) unique[key] = r;
     });
     respond({ endpoints: Object.values(unique).slice(-20) });
     return true;
   }
+
+  if (msg.type === 'GET_PRESETS') {
+    // Pulled from the same constants injected.js uses. Kept here so the popup
+    // can render the dropdown without bundling the helpers into the popup.
+    respond({
+      presets: [
+        { id: 'generic', label: '[Generic]', sortOrder: 99 },
+        { id: 'linkedin-voyager', label: '[LinkedIn Voyager]', sortOrder: 1 },
+        { id: 'graphql', label: '[GraphQL]', sortOrder: 2 },
+        { id: 'json-api', label: '[JSON API]', sortOrder: 3 }
+      ],
+      defaultPresetId: 'linkedin-voyager'
+    });
+    return true;
+  }
 });
+
+// ---------------------------------------------------------------------------
+// Truncation + binary skip (applied in background; defence in depth)
+// ---------------------------------------------------------------------------
+
+const BINARY_TYPES = /^(image\/|video\/|audio\/|application\/octet-stream|application\/pdf|application\/zip|font\/)/;
+
+function _truncateEntry(entry) {
+  if (!entry) return entry;
+  const out = Object.assign({}, entry);
+
+  // Truncate requestBody if it is a giant string
+  if (typeof out.requestBody === 'string' && out.requestBody.length > MAX_BODY_BYTES) {
+    out.requestBody = out.requestBody.slice(0, MAX_BODY_BYTES);
+    out.requestBodyTruncated = true;
+  }
+
+  // Response body — handle binary skip first, then size cap.
+  const contentType = (out.responseHeaders && (out.responseHeaders['content-type'] || out.responseHeaders['Content-Type'])) || '';
+  const rawBodyBytes = _byteLength(out.responseBody);
+  out.responseBodyBytes = rawBodyBytes;
+
+  if (BINARY_TYPES.test(String(contentType).toLowerCase().trim())) {
+    out.responseBody = {
+      _skipped: 'binary',
+      _contentType: contentType,
+      _contentLength: rawBodyBytes
+    };
+    return out;
+  }
+
+  if (typeof out.responseBody === 'string' && out.responseBody.length > MAX_BODY_BYTES) {
+    const preview = out.responseBody.slice(0, MAX_BODY_BYTES);
+    out.responseBody = {
+      _truncated: true,
+      _originalBytes: rawBodyBytes,
+      _keptBytes: _byteLength(preview),
+      _preview: preview
+    };
+  } else if (out.responseBody && typeof out.responseBody === 'object' && rawBodyBytes > MAX_BODY_BYTES) {
+    // For object bodies we don't try to partial-truncate; we record size.
+    out.responseBody = {
+      _truncated: true,
+      _originalBytes: rawBodyBytes,
+      _note: 'object body exceeded 5 MB; not preserved in capture'
+    };
+  }
+
+  return out;
+}
+
+function _byteLength(value) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'string') return value.length; // approximation; UTF-8 byte length can differ but length is good enough for the cap signal
+  try {
+    return JSON.stringify(value).length;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// JSONL serialization — one event per line, LF terminated, UTF-8 no BOM.
+// The "shape" of each entry matches the spec's field reference (ts, tab,
+// preset, request{method,url,headers,body}, response{status,headers,body,
+// bodyBytes}, duration_ms). Fields already redacted in injected.js.
+// ---------------------------------------------------------------------------
+
+function _toJsonlLine(entry) {
+  const line = {
+    ts: entry.timestamp || new Date().toISOString(),
+    tab: recordingTabId,
+    preset: entry.preset || (captureConfig && captureConfig.preset) || 'generic',
+    request: {
+      method: entry.method,
+      url: entry.url,
+      headers: entry.requestHeaders || {},
+      body: entry.requestBody === undefined ? null : entry.requestBody
+    },
+    response: {
+      status: entry.status,
+      headers: entry.responseHeaders || {},
+      body: entry.responseBody === undefined ? null : entry.responseBody,
+      bodyBytes: entry.responseBodyBytes || 0
+    },
+    duration_ms: entry.duration
+  };
+  if (entry.error) line.error = entry.error;
+  return JSON.stringify(line);
+}

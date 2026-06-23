@@ -8,7 +8,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      width: 320px;
+      width: 360px;
       font-family: 'Segoe UI', system-ui, sans-serif;
       background: #0f172a;
       color: #e2e8f0;
@@ -63,18 +63,20 @@
       letter-spacing: 0.05em;
     }
 
-    .filter-section {
+    .section {
       padding: 10px 16px 0;
     }
 
-    .filter-section label {
+    .section label {
       font-size: 11px;
       color: #64748b;
       display: block;
       margin-bottom: 4px;
     }
 
-    .filter-input {
+    .filter-input,
+    .preset-select,
+    .textarea {
       width: 100%;
       padding: 7px 10px;
       background: #1e293b;
@@ -83,14 +85,71 @@
       color: #e2e8f0;
       font-size: 12px;
       outline: none;
+      font-family: inherit;
     }
 
-    .filter-input:focus {
+    .textarea {
+      font-family: 'Courier New', monospace;
+      resize: vertical;
+      min-height: 56px;
+      line-height: 1.4;
+    }
+
+    .filter-input:focus,
+    .preset-select:focus,
+    .textarea:focus {
       border-color: #22c55e;
     }
 
-    .filter-input::placeholder {
+    .filter-input::placeholder,
+    .textarea::placeholder {
       color: #475569;
+    }
+
+    .mode-row {
+      display: flex;
+      gap: 14px;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .mode-row label {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: #94a3b8;
+      margin-bottom: 0;
+    }
+
+    .mode-row input[type="radio"] {
+      accent-color: #22c55e;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-top: 4px;
+      font-size: 11px;
+      color: #cbd5e1;
+    }
+
+    .toggle-row input[type="checkbox"] {
+      accent-color: #22c55e;
+      margin-top: 2px;
+    }
+
+    .toggle-row .hint {
+      color: #64748b;
+      font-size: 10px;
+      margin-top: 2px;
+      line-height: 1.35;
+    }
+
+    .toggle-row.warning .hint {
+      color: #f87171;
     }
 
     .actions {
@@ -244,19 +303,53 @@
     </div>
   </div>
 
-  <div class="filter-section">
-    <label>Filtrar por URL (opcional)</label>
-    <input
-      type="text"
+  <div class="section">
+    <label for="presetSelect">Preset</label>
+    <select id="presetSelect" class="preset-select">
+      <option value="generic">[Generic]</option>
+      <option value="linkedin-voyager">[LinkedIn Voyager]</option>
+      <option value="graphql">[GraphQL]</option>
+      <option value="json-api">[JSON API]</option>
+    </select>
+  </div>
+
+  <div class="section">
+    <label for="filterInput">URL filter (multi-línea)</label>
+    <textarea
       id="filterInput"
-      class="filter-input"
-      placeholder="ej: api2.skool.com, /api/v1, graphql"
-    />
+      class="textarea"
+      rows="3"
+      placeholder="Una por línea. /regex/i, *glob*, o substring literal."
+    ></textarea>
+    <div class="mode-row">
+      <label><input type="radio" name="filterMode" value="AND" /> AND</label>
+      <label><input type="radio" name="filterMode" value="OR" checked /> OR</label>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="toggle-row" id="redactRow">
+      <input type="checkbox" id="redactToggle" checked />
+      <div>
+        <label for="redactToggle" style="display:inline; margin:0; color:#e2e8f0; font-size:12px;">
+          Redact secrets <span style="color:#64748b; font-weight:400;">(recommended)</span>
+        </label>
+        <div class="hint" id="redactHint">Se redactan cookies, CSRF, y campos comunes antes de guardar.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>Formato de salida</label>
+    <div class="mode-row">
+      <label><input type="radio" name="outputFormat" value="jsonl" checked /> JSON-Lines (recomendado)</label>
+      <label><input type="radio" name="outputFormat" value="json-array" /> JSON array (legacy v1.2.x)</label>
+    </div>
   </div>
 
   <div class="actions">
     <button id="btnRecord">▶ Iniciar</button>
-    <button id="btnDownload" disabled>⬇ Descargar JSON</button>
+    <button id="btnDownload" disabled>⬇ Descargar</button>
     <button id="btnClear" title="Limpiar">🗑</button>
   </div>
 
