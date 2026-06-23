@@ -1,11 +1,18 @@
 /**
- * API Reverse Engineer — Content Script
- * Intercepta fetch + XHR en la página actual.
- * Solo funciona cuando el recording está activo.
+ * API Reverse Engineer — Content Script (v1.3.0)
+ * Bridge entre injected.js (MAIN world) y el background service worker.
+ *
+ * Capture Mode (v1.3.0):
+ *   - Recibe SET_CAPTURE_CONFIG del background y forwardea a injected.js via
+ *     window.postMessage (MAIN world). Así, el `captureConfig` queda en MAIN
+ *     world antes de que llegue el primer request.
+ *   - El evento __ARE_REQUEST__ ya viene redactado desde injected.js; este
+ *     script solo lo pasa al background sin tocar headers/bodies.
  */
 
 let isRecording = false;
 let filter = '';
+let captureConfig = null;
 
 // Escuchar mensajes del background
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
@@ -15,46 +22,68 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     console.log('[ARE Content] Recording started, filter:', filter);
     respond({ ok: true });
   }
+
   if (msg.type === 'STOP_RECORDING') {
     isRecording = false;
     console.log('[ARE Content] Recording stopped');
     respond({ ok: true });
   }
+
   if (msg.type === 'GET_STATUS') {
-    respond({ isRecording, filter });
+    respond({ isRecording, filter, captureConfig });
   }
+
   if (msg.type === 'INJECT_NOW') {
     // Background will inject via chrome.scripting.executeScript
     // This message is just to confirm content script is ready
     respond({ ok: true });
   }
+
+  if (msg.type === 'SET_CAPTURE_CONFIG') {
+    // Update local copy and forward to injected.js (MAIN world) via postMessage.
+    captureConfig = msg.captureConfig || null;
+    forwardCaptureConfigToInjected();
+    respond({ ok: true });
+  }
 });
 
-console.log('[ARE Content] Content script loaded');
-// No inyectamos aquí — el background lo hará via chrome.scripting (bypasea CSP)
+function forwardCaptureConfigToInjected() {
+  try {
+    window.postMessage({
+      __ARE_CAPTURE_CONFIG__: true,
+      captureConfig: captureConfig
+    }, '*');
+  } catch (e) {
+    console.error('[ARE Content] Failed to forward captureConfig to injected:', e);
+  }
+}
 
-// Recibir datos del injected script via window events
+console.log('[ARE Content] Content script loaded');
+
+// Recibir datos del injected script via window events.
+// Los entries ya vienen redactados (redacción aplicada en injected.js).
 window.addEventListener('__ARE_REQUEST__', (event) => {
   const entry = event.detail;
   console.log('[ARE Content] Request intercepted:', entry.method, entry.url, 'recording:', isRecording);
 
   if (!isRecording) {
-    console.log('[ARE Content] Not recording, skipping');
     return;
   }
 
-  // Filtrar por URL si hay filtro activo
-  if (filter && !entry.url.includes(filter)) {
-    console.log('[ARE Content] Filtered out by:', filter);
+  // Filtrar por URL si hay filtro activo (compat v1.2.3 — single-string filter).
+  // Capture Mode v1.3.0 ya filtra en injected.js antes de despachar, pero
+  // mantenemos este check por defense-in-depth y para recordings iniciados
+  // sin captureConfig (legacy path).
+  if (filter && !(entry.url || '').includes(filter)) {
     return;
   }
 
-  // Enviar al background
+  // Enviar al background (entry ya está redactado si redact estaba enabled).
   chrome.runtime.sendMessage({
     type: 'CAPTURE',
     entry
   }).then(() => {
-    console.log('[ARE Content] Sent to background');
+    // ok
   }).catch((err) => {
     console.error('[ARE Content] Failed to send to background:', err);
   });
