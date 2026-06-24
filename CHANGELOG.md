@@ -4,6 +4,148 @@ All notable changes to API Reverse Engineer are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-06-24 — OPFS streaming buffer (ADR-0002)
+
+### Changed
+
+- **Capture buffer rewritten: in-memory `captured[]` → OPFS streaming
+  append.** The service worker no longer accumulates every captured
+  request in a JS array. Each event is now streamed to
+  `captures.jsonl` in the extension's Origin Private File System via
+  `navigator.storage.getDirectory()` + `createSyncAccessHandle()`. The
+  SW only keeps lightweight metadata in memory (event count, dedup set,
+  `isRecording` flag). See `docs/spec/adr-0002-chrome-mv3-capture-buffer-architecture.md`
+  for the full rationale and the alternatives that were rejected.
+- **Quota risk on long sessions: eliminated.** v1.3.2 still bounded the
+  in-memory array to 50 MB (FIFO eviction of the oldest events). v1.4.0
+  pushes the buffer to disk, so sessions of 100 MB – 1 GB are now
+  supported without OOM. The `MAX_TOTAL_BYTES = 50 MB` cap and FIFO
+  eviction logic from v1.3.2 are kept as a *fallback* path (used when
+  OPFS is unavailable — see below).
+- **Service worker lifecycle robustness.** The OPFS file persists in the
+  extension sandbox across SW restarts and browser close. v1.3.2 lost
+  the entire buffer on every SW wake-up; v1.4.0 preserves the file on
+  disk so a future `restoreFromExisting()` can re-open it. (See the
+  "Fresh-start policy" note below for the v1.4.0 trade-off.)
+
+### Added
+
+- **`unlimitedStorage` permission in `manifest.json`.** OPFS quota
+  scales with this permission; without it, OPFS is capped at ~10 % of
+  disk space, which is still enough for our use case but the
+  permission is the documented MV3 pattern. The permission is the
+  same one the Chrome Web Store review board expects for plugins that
+  store large amounts of local data; it is declared in our
+  `PRIVACY-POLICY.md` (ADR-0001).
+- **`src/opfs-buffer.js` — new UMD module.** Encapsulates the OPFS
+  state machine (`init`, `append`, `getFile`, `clear`, `close`,
+  `restoreFromExisting`, `inFallbackMode`). Loaded the same way as
+  `src/capture-config.js`: window-attached in the SW, CJS-exported
+  for node tests. The `background.js` SW is now a thin dispatcher
+  over the buffer.
+- **`src/memory-buffer.js` — new UMD module.** Encapsulates the
+  v1.3.2 in-memory array as the fallback when OPFS is unavailable.
+  Mirrors the `OpfsBuffer` API so the SW can use either buffer with
+  the same `.append()` / `.getCount()` / `.clear()` shape. The 50 MB
+  FIFO cap moved here from `background.js`. Result: `background.js`
+  no longer references the legacy `captured[]` array at all
+  (verified by `grep captured.push src/background.js` → 0 matches).
+- **17 new unit tests in `test/opfs-buffer.test.mjs`** covering:
+  navigator mock, single + 100-event writes, JSONL round-trip, blob
+  size = sum of lines, fallback paths (no `getDirectory`, null
+  navigator, throwing `getDirectory`), CLEAR, SW-restart file
+  persistence + restore, restore on empty directory, multi-tab
+  isolation, idempotent close, append-before-init safety, fresh-start
+  truncation, 5 MB payload, re-init after clear.
+- **8 new unit tests in `test/memory-buffer.test.mjs`** covering:
+  fallback-mode semantics, `append` + `getCount`, `snapshot()` copy
+  semantics, `clear()`, FIFO eviction under the byte cap, `isOpen()`,
+  `getBytesWritten()`.
+- **`restoreFromExisting()` API** in `OpfsBuffer`. Used by the SW on
+  wake-up to detect a leftover `captures.jsonl` from a prior session
+  and offer the user a resume option (F4 feature — not auto-resumed
+  in v1.4.0, see "Fresh-start policy" below).
+- **Fallback warning in the badge.** When OPFS init fails (Chrome <
+  102 or permission denied), the badge colour shifts from green to
+  amber-yellow (`#eab308`) so the user knows the capture is in
+  fallback mode and is bounded by the v1.3.2 50 MB cap.
+
+### Fixed
+
+- The v1.3.2 service-worker OOM risk on multi-thousand-event sessions
+  is now structurally eliminated (the in-memory array is gone on the
+  primary path), not just capped. The cap remains as a defensive
+  fallback only.
+
+### Fallback path (when OPFS is unavailable)
+
+When `navigator.storage.getDirectory()` throws (Chrome < 102, strict
+permissioning, browser bug), the plugin transparently degrades to the
+v1.3.2 logic:
+
+1. The buffer is held in a JS array (`captured[]`).
+2. A 50 MB FIFO cap is enforced (oldest events are dropped first).
+3. The badge colour shifts to amber-yellow as a visible warning.
+4. The popup's `GET_STATE` response includes `fallbackMode: true` so
+   the UI can render a "Running in fallback mode" hint (F4).
+
+This path is covered by three of the new tests (lines 159-194 of
+`opfs-buffer.test.mjs`). In a normal Chrome 102+ install the fallback
+is never reached; it exists for edge cases only.
+
+### Fresh-start policy (documented trade-off)
+
+`OpfsBuffer.init()` **truncates** `captures.jsonl` on every START. This
+is intentional (ADR-0002 §"Decision" + §"Consequences"):
+
+- Predictability: the user clicks START, gets a clean file. No "why are
+  there events from yesterday in this file?" debugging session.
+- SW-restart safety: if a previous SW write left the file in a partial
+  state, the next START cleanly resets it.
+- Trade-off: a user that wants append-mode (resume a session across
+  browser restarts) needs the F4 `restoreFromExisting()` workflow,
+  which is **not wired into the popup in v1.4.0**. The API exists in
+  the module; UI integration is a follow-up.
+
+### Privacy posture (unchanged from v1.3.x)
+
+- Redaction still happens at the injection site (`injected.js` MAIN
+  world). No raw cookies / csrf tokens ever cross `postMessage` or
+  reach the SW.
+- The OPFS file contains the same redacted content as the v1.3.x
+  in-memory array. No new data is captured.
+- The OPFS file is sandboxed to the extension and never uploaded. The
+  user is the only entity that can read it (via Download, which copies
+  to a local file).
+- `unlimitedStorage` is a *local* quota extension, not a network
+  permission. The plugin still makes zero network calls.
+- The CHROME-STORE-FINAL-REPORT privacy summary is updated to mention
+  the OPFS path. See "Privacy guarantees" below.
+
+### Migration from v1.3.2
+
+- **No action required for end users.** The plugin keeps working the
+  same way: click Iniciar → use the site → click Detener → click
+  Descargar. The output file (`are-capture-*.jsonl`) has the same
+  format as v1.3.x — the linkedin-all-in-one-api importer does not
+  need any changes.
+- **For users on Chrome < 102:** the plugin still works in fallback
+  mode. Sessions are still bounded to ~50 MB; large captures may drop
+  the oldest events (FIFO). Same trade-off as v1.3.2.
+- **For developers:** the new `src/opfs-buffer.js` module is the
+  public surface. If you need to consume the buffer from another SW
+  handler, use the `OpfsBuffer` factory. The legacy in-memory array
+  is still wired in background.js for the fallback path.
+
+### Privacy guarantees
+
+- All redaction defaults (cookies, csrf, body fields) are unchanged.
+- The OPFS file is local-only. The plugin still has zero telemetry,
+  zero remote-config, zero network calls.
+- The `unlimitedStorage` permission is the documented MV3 pattern for
+  local-only high-volume storage. The privacy policy declares the
+  model: local-first, no upload, user-controlled.
+
 ## [1.3.0] — 2026-06-23 — Capture Mode
 
 ### Added

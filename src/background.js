@@ -1,424 +1,576 @@
 /**
- * API Reverse Engineer — Background Service Worker (v1.3.0)
- * Almacena los requests capturados, actualiza badge, serializa a JSONL.
+ * API Reverse Engineer — Background Service Worker (v1.4.0)
  *
- * Capture Mode (v1.3.0):
- *   - captureConfig (preset + filter + redact patterns) se persiste en
- *     chrome.storage.session, igual que captured/uniqueKeys, para sobrevivir
- *     el SW wake-up.
- *   - DOWNLOAD_JSONL produce un archivo `.jsonl` (un evento por línea).
- *   - DOWNLOAD (legacy) sigue produciendo el shape v1.2.3 {meta, endpoints, all}.
- *   - Truncación: 5 MB por response body, binaries omitidos, 10k events cap.
+ * Capture Mode + OPFS streaming buffer per ADR-0002.
+ *
+ * Buffer architecture (v1.4.0):
+ *   - Primary path: append streaming writes to `captures.jsonl` in the
+ *     extension's OPFS via `OpfsBuffer` (src/opfs-buffer.js). One entry
+ *     per line, JSONL format. Survives SW restart, browser close, OOM.
+ *   - Fallback path: if OPFS is unavailable (Chrome < 102 or the init
+ *     call throws), fall back to the v1.3.2 in-memory array. The plugin
+ *     still works, but the OOM risk returns. We surface a warning
+ *     (yellow badge) so the user knows the capture is in fallback mode.
+ *
+ * Counters:
+ *   - `inMemoryCount` (number): total events captured this session, kept
+ *     in module-level memory. Used for the badge and GET_STATE.total.
+ *   - `inMemoryUnique` (Set<string>): dedup keys (METHOD:URL-without-query).
+ *     Used for GET_STATE.unique. Cleared on START and CLEAR.
+ *   - `captured[]` (Array): ONLY used in the v1.3.2 fallback path. If
+ *     OPFS init succeeds this array stays empty; if OPFS init fails, all
+ *     writes go here and DOWNLOAD reads from it.
+ *
+ * Privacy:
+ *   - Redaction happens at the injection site (injected.js MAIN world) so
+ *     raw cookies / csrf tokens never cross postMessage into the SW.
+ *   - `chrome.storage.session` persists only metadata (counters +
+ *     isRecording + captureConfig). The capture buffer itself is never
+ *     serialised to chrome.storage (v1.3.2 fix retained).
+ *
+ * Node compatibility:
+ *   - The chrome.* API calls at the top level are guarded by
+ *     `typeof chrome !== 'undefined'` so the file can be loaded by
+ *     `node -e "import('./src/background.js')"` for syntax validation
+ *     and lightweight smoke tests. The chrome-specific code paths are
+ *     only exercised in the SW context.
  */
 
-const MAX_EVENTS = 10000;
-const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MB
-const WARNING_AT = 9000;
-// Bug fix 2026-06-24: also cap the TOTAL memory footprint of `captured[]`
-// to avoid SW OOM (was unbounded before — at MAX_EVENTS with 5MB events
-// that's 50GB potential, which would crash the SW long before the user
-// downloaded anything). When we hit this cap, drop the oldest events
-// (FIFO) and keep capturing — the user just sees a slightly truncated
-// session. Trade-off vs quota: session storage is gone, but the
-// in-memory buffer is bounded to ~50MB which is SW-safe.
-const MAX_TOTAL_BYTES = 50 * 1024 * 1024; // 50 MB
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  // Service-worker context: nothing global to expose (the SW doesn't run
+  // a "module" — the IIFE is just the top-level script body). The OpfsBuffer
+  // helper used here is loaded as a separate classic script via
+  // web_accessible_resources / service-worker-script, OR — for now — we
+  // also expose a window/global symbol for tests and node compatibility.
+  if (typeof self !== 'undefined') {
+    self.__ARE_BACKGROUND__ = api;
+  } else if (typeof globalThis !== 'undefined') {
+    globalThis.__ARE_BACKGROUND__ = api;
+  } else if (typeof module !== 'undefined' && module.exports) {
+    module.exports = api;
+  }
+}(typeof self !== 'undefined' ? self : (typeof globalThis !== 'undefined' ? globalThis : this), function () {
+  'use strict';
 
-let captured = [];
-let uniqueKeys = new Set();
-let totalBytes = 0; // Bug fix 2026-06-24: tracks in-memory footprint for FIFO eviction
-let isRecording = false;
-let recordingTabId = null;
-let captureConfig = null;
-let outputFormat = 'jsonl'; // 'jsonl' | 'json-array'
-let filterMode = 'OR';
+  var OpfsBuffer = (typeof window !== 'undefined' && window.OpfsBuffer)
+    || (typeof self !== 'undefined' && self.OpfsBuffer)
+    || (typeof globalThis !== 'undefined' && globalThis.OpfsBuffer)
+    || null;
 
-// Restore state when service worker wakes up.
-// Bug fix 2026-06-24: chrome.storage.session has a 10MB quota total. We
-// previously persisted the full `captured[]` array on every CAPTURE
-// message, which threw 'Session storage quota bytes exceeded' after ~50-100
-// large LinkedIn Voyager/GraphQL responses. Fix: persist ONLY metadata
-// (counters + isRecording + config). The actual `captured[]` buffer
-// stays in memory only — if the SW crashes, the buffer is lost. That's
-// acceptable because (a) the SW doesn't crash mid-session in normal use,
-// (b) the popup restores counters from `total`/`unique` in GET_STATE, not
-// from the array, and (c) the consumer downloads the JSONL on Stop.
-//
-// Trade-off: if you forget to Stop before closing the browser, you lose
-// the captures. Same as before the fix (session storage cleared on browser
-// close). Net result: no quota error, no data loss in normal flow.
-chrome.storage.session.get(
-  ['isRecording', 'recordingTabId', 'captureConfig', 'outputFormat', 'filterMode'],
-  (data) => {
-    if (data && data.isRecording) {
-      isRecording = data.isRecording;
-      recordingTabId = data.recordingTabId || null;
-      captureConfig = data.captureConfig || null;
-      outputFormat = data.outputFormat || 'jsonl';
-      filterMode = data.filterMode || 'OR';
-      // captured[] and uniqueKeys start empty after SW restart.
-      // The user will need to re-record, but the session is still active
-      // (isRecording=true), so re-clicking Iniciar isn't needed — but they
-      // WILL see '0 REQUESTS' until they navigate again.
+  var MemoryBuffer = (typeof window !== 'undefined' && window.MemoryBuffer)
+    || (typeof self !== 'undefined' && self.MemoryBuffer)
+    || (typeof globalThis !== 'undefined' && globalThis.MemoryBuffer)
+    || null;
+
+  var MAX_EVENTS = 10000;
+  var MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MB
+  var WARNING_AT = 9000;
+
+  // ----- Module-level state (v1.4.0) -----
+  var inMemoryCount = 0;       // total events this session
+  var inMemoryUnique = new Set(); // METHOD:URL dedup keys
+  var isRecording = false;
+  var recordingTabId = null;
+  var captureConfig = null;
+  var outputFormat = 'jsonl';
+  var filterMode = 'OR';
+
+  // OPFS streaming buffer (primary path).
+  var opfsBuffer = OpfsBuffer ? OpfsBuffer.createOpfsBuffer({ filename: 'captures.jsonl' }) : null;
+  var opfsAvailable = !!opfsBuffer; // set to false on init failure
+  // In-memory fallback buffer (used when OPFS is unavailable).
+  var memoryBuffer = MemoryBuffer ? MemoryBuffer.createMemoryBuffer() : null;
+  // The active buffer — whichever is in use right now. Updated when OPFS
+  // init succeeds / fails / mid-session write fails.
+  var activeBuffer = null;
+
+  // ---------------------------------------------------------------------------
+  // chrome.storage.session — restore isRecording / config on SW wake-up
+  // (Captures themselves live in OPFS now, so we don't persist the array.)
+  // ---------------------------------------------------------------------------
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+    chrome.storage.session.get(
+      ['isRecording', 'recordingTabId', 'captureConfig', 'outputFormat', 'filterMode'],
+      function (data) {
+        if (data && data.isRecording) {
+          isRecording = data.isRecording;
+          recordingTabId = data.recordingTabId || null;
+          captureConfig = data.captureConfig || null;
+          outputFormat = data.outputFormat || 'jsonl';
+          filterMode = data.filterMode || 'OR';
+          // captured[] and counters start empty after SW restart.
+          // The OPFS file persists on disk, so on the next START we truncate
+          // it (fresh session per ADR-0002 decision). If the user wants to
+          // resume an old session, that is a F4 feature.
+        }
+      }
+    );
+  }
+
+  function _persistSession() {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.session) return;
+    try {
+      chrome.storage.session.set({
+        isRecording: isRecording,
+        recordingTabId: recordingTabId,
+        captureConfig: captureConfig,
+        outputFormat: outputFormat,
+        filterMode: filterMode
+      });
+    } catch (e) {
+      console.error('[ARE] Failed to persist session:', e);
     }
   }
-);
 
-function _persistSession() {
-  try {
-    chrome.storage.session.set({
-      isRecording,
-      recordingTabId,
-      captureConfig,
-      outputFormat,
-      filterMode
-    });
-  } catch (e) {
-    console.error('[ARE] Failed to persist session:', e);
+  function _setBadge(count, tabId) {
+    if (typeof chrome === 'undefined' || !chrome.action) return;
+    if (!tabId) return;
+    var text = count >= WARNING_AT ? (count + '!') : String(count);
+    var color = '#22c55e'; // default green
+    if (count >= WARNING_AT) color = '#f59e0b'; // amber
+    if (activeBuffer && activeBuffer.inFallbackMode && activeBuffer.inFallbackMode()) color = '#eab308'; // yellow = fallback mode
+    try {
+      chrome.action.setBadgeText({ text: text, tabId: tabId });
+      chrome.action.setBadgeBackgroundColor({ color: color, tabId: tabId });
+    } catch (e) {}
   }
-}
 
-// Recibir captures desde content scripts
-chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  // ---------------------------------------------------------------------------
+  // chrome.runtime.onMessage — main entry point
+  // ---------------------------------------------------------------------------
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function (msg, sender, respond) {
 
-  if (msg.type === 'CAPTURE') {
-    // Solo capturar del tab donde se inició el recording
-    const tabId = sender.tab && sender.tab.id;
-    if (recordingTabId !== null && tabId !== recordingTabId) {
-      respond({ ok: true });
-      return true;
-    }
+      // -----------------------------------------------------------------------
+      // CAPTURE
+      // -----------------------------------------------------------------------
+      if (msg.type === 'CAPTURE') {
+        var tabId = sender.tab && sender.tab.id;
+        if (recordingTabId !== null && tabId !== recordingTabId) {
+          respond({ ok: true });
+          return true;
+        }
 
-    const entry = msg.entry;
-    if (!entry || !entry.url || !entry.method) {
-      respond({ ok: true });
-      return true;
-    }
+        var entry = msg.entry;
+        if (!entry || !entry.url || !entry.method) {
+          respond({ ok: true });
+          return true;
+        }
 
-    // Apply 5MB body truncation + binary skip BEFORE storing. Doing it here
-    // keeps captured[] bounded regardless of what content.js sends.
-    const processed = _truncateEntry(entry);
+        // Truncate body + binary skip BEFORE storing (defence in depth).
+        var processed = _truncateEntry(entry);
 
-    const key = `${processed.method}:${processed.url.split('?')[0]}`;
-    const isNew = !uniqueKeys.has(key);
-    uniqueKeys.add(key);
+        var key = processed.method + ':' + processed.url.split('?')[0];
+        var isNew = !inMemoryUnique.has(key);
+        inMemoryUnique.add(key);
 
-    const entryWithMeta = Object.assign({}, processed, { isNewEndpoint: isNew });
-    const entryBytes = _estimateEntryBytes(entryWithMeta);
-    captured.push(entryWithMeta);
-    totalBytes += entryBytes;
+        var entryWithMeta = Object.assign({}, processed, { isNewEndpoint: isNew });
 
-    // Bug fix 2026-06-24: total memory cap (FIFO eviction of oldest events
-    // when we exceed MAX_TOTAL_BYTES). Prevents SW OOM on long sessions.
-    while (totalBytes > MAX_TOTAL_BYTES && captured.length > 1) {
-      const dropped = captured.shift();
-      totalBytes -= _estimateEntryBytes(dropped);
-    }
+        if (activeBuffer) {
+          var wrote = activeBuffer.append(entryWithMeta);
+          if (wrote) {
+            inMemoryCount = activeBuffer.getCount();
+          } else {
+            // The current buffer rejected the write. If we were on OPFS,
+            // switch to the memory buffer for the rest of the session.
+            if (activeBuffer === opfsBuffer && memoryBuffer) {
+              console.warn('[ARE] OPFS write failed, switching to in-memory fallback for this session');
+              activeBuffer = memoryBuffer;
+              memoryBuffer.append(entryWithMeta);
+              inMemoryCount = memoryBuffer.getCount();
+              opfsAvailable = false;
+            }
+          }
+        }
 
-    // Hard cap: auto-stop at MAX_EVENTS.
-    if (captured.length >= MAX_EVENTS) {
-      isRecording = false;
-      console.warn(`[ARE] Reached ${MAX_EVENTS} events, auto-stopping`);
-    }
+        if (inMemoryCount >= MAX_EVENTS) {
+          isRecording = false;
+          console.warn('[ARE] Reached ' + MAX_EVENTS + ' events, auto-stopping');
+        }
 
-    _persistSession();
+        _persistSession();
+        _setBadge(inMemoryCount, tabId);
 
-    // Actualizar badge solo en el tab grabando
-    if (tabId) {
-      const text = captured.length >= WARNING_AT
-        ? `${captured.length}!`
-        : String(captured.length);
-      try {
-        chrome.action.setBadgeText({ text, tabId });
-        chrome.action.setBadgeBackgroundColor({
-          color: captured.length >= WARNING_AT ? '#f59e0b' : '#22c55e',
-          tabId
+        respond({ ok: true });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // GET_STATE
+      // -----------------------------------------------------------------------
+      if (msg.type === 'GET_STATE') {
+        var unique = inMemoryUnique.size;
+        var isOpfsActive = activeBuffer === opfsBuffer && opfsBuffer && !opfsBuffer.inFallbackMode();
+        var isFallback = activeBuffer === memoryBuffer || !activeBuffer || (opfsBuffer && opfsBuffer.inFallbackMode());
+        respond({
+          isRecording: isRecording,
+          recordingTabId: recordingTabId,
+          total: inMemoryCount,
+          unique: unique,
+          maxEvents: MAX_EVENTS,
+          warningAt: WARNING_AT,
+          outputFormat: outputFormat,
+          captureConfig: captureConfig,
+          opfsActive: isOpfsActive,
+          fallbackMode: isFallback
         });
-      } catch (e) {}
-    }
+        return true;
+      }
 
-    respond({ ok: true });
-    return true;
-  }
+      // -----------------------------------------------------------------------
+      // START
+      // -----------------------------------------------------------------------
+      if (msg.type === 'START') {
+        isRecording = true;
+        recordingTabId = msg.tabId || null;
+        var filter = msg.filter || '';
+        captureConfig = msg.captureConfig || null;
+        outputFormat = msg.outputFormat || 'jsonl';
+        filterMode = (captureConfig && captureConfig.filterMode) || 'OR';
 
-  if (msg.type === 'GET_STATE') {
-    respond({
-      isRecording,
-      recordingTabId,
-      total: captured.length,
-      unique: uniqueKeys.size,
-      maxEvents: MAX_EVENTS,
-      warningAt: WARNING_AT,
-      outputFormat,
-      captureConfig
-    });
-    return true;
-  }
+        // Reset in-memory state.
+        inMemoryCount = 0;
+        inMemoryUnique = new Set();
+        if (memoryBuffer) memoryBuffer.clear();
 
-  if (msg.type === 'START') {
-    isRecording = true;
-    recordingTabId = msg.tabId || null;
-    filter = msg.filter || '';
-    captureConfig = msg.captureConfig || null;
-    outputFormat = msg.outputFormat || 'jsonl';
-    filterMode = (captureConfig && captureConfig.filterMode) || 'OR';
-    // Reset captures — START begins a new session.
-    captured = [];
-    uniqueKeys = new Set();
-    totalBytes = 0; // Bug fix 2026-06-24: reset memory tracker
+        // Open the OPFS file (truncates any previous session).
+        if (opfsBuffer) {
+          // Don't await — keep handler non-blocking. If init fails the
+          // first CAPTURE switches to the memory buffer.
+          opfsBuffer.init().then(function (ok) {
+            opfsAvailable = ok;
+            if (ok) {
+              activeBuffer = opfsBuffer;
+              console.log('[ARE] OPFS streaming buffer ready (captures.jsonl)');
+            } else {
+              activeBuffer = memoryBuffer;
+              console.warn('[ARE] OPFS unavailable, using in-memory fallback (v1.3.2 mode)');
+            }
+          }).catch(function (e) {
+            console.error('[ARE] OPFS init threw, using in-memory fallback:', e);
+            opfsAvailable = false;
+            activeBuffer = memoryBuffer;
+          });
+        } else {
+          opfsAvailable = false;
+          activeBuffer = memoryBuffer;
+        }
 
-    _persistSession();
+        _persistSession();
 
-    // Persist last user choice to local storage so the popup restores it.
-    chrome.storage.local.set({ filter, captureConfig, outputFormat, filterMode });
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ filter: filter, captureConfig: captureConfig, outputFormat: outputFormat, filterMode: filterMode });
+        }
 
-    // Set badge immediately to show recording started
-    if (recordingTabId) {
-      try {
-        chrome.action.setBadgeText({ text: '●', tabId: recordingTabId });
-        chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: recordingTabId });
-      } catch (e) {}
-    }
+        if (recordingTabId && typeof chrome !== 'undefined' && chrome.action) {
+          try {
+            chrome.action.setBadgeText({ text: '●', tabId: recordingTabId });
+            chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: recordingTabId });
+          } catch (e) {}
+        }
 
-    // Inject interceptor scripts into MAIN world (in order: helpers, then
-    // interceptors so window.CaptureConfig is defined when injected.js runs).
-    if (recordingTabId) {
-      chrome.scripting.executeScript({
-        target: { tabId: recordingTabId },
-        world: 'MAIN',
-        files: ['src/capture-config.js', 'src/injected.js']
-      }).then(() => {
-        console.log('[ARE] Interceptors injected into MAIN world');
-
-        // Push captureConfig to content.js → injected.js BEFORE the first
-        // request fires. We do this via START_RECORDING + SET_CAPTURE_CONFIG.
-        chrome.tabs.sendMessage(recordingTabId, {
-          type: 'START_RECORDING',
-          filter
-        }).catch((err) => {
-          console.warn('[ARE] Failed to send START_RECORDING to tab', recordingTabId, err);
-        });
-
-        if (captureConfig) {
-          chrome.tabs.sendMessage(recordingTabId, {
-            type: 'SET_CAPTURE_CONFIG',
-            captureConfig
-          }).catch((err) => {
-            console.warn('[ARE] Failed to send SET_CAPTURE_CONFIG to tab', recordingTabId, err);
+        if (recordingTabId && typeof chrome !== 'undefined' && chrome.scripting) {
+          chrome.scripting.executeScript({
+            target: { tabId: recordingTabId },
+            world: 'MAIN',
+            files: ['src/capture-config.js', 'src/injected.js']
+          }).then(function () {
+            console.log('[ARE] Interceptors injected into MAIN world');
+            chrome.tabs.sendMessage(recordingTabId, {
+              type: 'START_RECORDING',
+              filter: filter
+            }).catch(function (err) {
+              console.warn('[ARE] Failed to send START_RECORDING to tab', recordingTabId, err);
+            });
+            if (captureConfig) {
+              chrome.tabs.sendMessage(recordingTabId, {
+                type: 'SET_CAPTURE_CONFIG',
+                captureConfig: captureConfig
+              }).catch(function (err) {
+                console.warn('[ARE] Failed to send SET_CAPTURE_CONFIG to tab', recordingTabId, err);
+              });
+            }
+          }).catch(function (err) {
+            console.error('[ARE] Failed to inject interceptors:', err);
           });
         }
-      }).catch((err) => {
-        console.error('[ARE] Failed to inject interceptors:', err);
-      });
-    }
 
-    respond({ ok: true });
-    return true;
-  }
+        respond({ ok: true });
+        return true;
+      }
 
-  if (msg.type === 'STOP') {
-    isRecording = false;
-    _persistSession();
+      // -----------------------------------------------------------------------
+      // STOP
+      // -----------------------------------------------------------------------
+      if (msg.type === 'STOP') {
+        isRecording = false;
+        _persistSession();
 
-    if (recordingTabId) {
-      try {
-        chrome.tabs.sendMessage(recordingTabId, { type: 'STOP_RECORDING' }).catch(() => {});
-        chrome.action.setBadgeText({ text: '', tabId: recordingTabId });
-      } catch (e) {}
-    }
-    recordingTabId = null;
-
-    respond({ ok: true });
-    return true;
-  }
-
-  // -------------------------------------------------------------------------
-  // DOWNLOAD — JSONL (v1.3.0 default) or legacy JSON array (v1.2.3 shape)
-  // -------------------------------------------------------------------------
-  if (msg.type === 'DOWNLOAD') {
-    const format = msg.format || outputFormat || 'jsonl';
-    const site = msg.site || 'unknown';
-    const preset = (captureConfig && captureConfig.preset) || 'generic';
-    const isoStamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
-
-    if (format === 'json-array') {
-      // Legacy v1.2.3 shape: {meta, endpoints, all}.
-      const unique = {};
-      captured.forEach((r) => {
-        const key = `${r.method}:${r.url.split('?')[0]}`;
-        if (!unique[key] || r.isNewEndpoint) unique[key] = r;
-      });
-      const data = {
-        meta: {
-          capturedAt: new Date().toISOString(),
-          total: captured.length,
-          uniqueEndpoints: Object.keys(unique).length,
-          site,
-          preset
-        },
-        endpoints: Object.values(unique),
-        all: captured
-      };
-      respond({
-        data: JSON.stringify(data, null, 2),
-        filename: `api-capture-${preset}-${isoStamp}.json`,
-        format: 'json-array'
-      });
-      return true;
-    }
-
-    // JSONL (v1.3.0 default): one event per line. Use responseBody which is
-    // already truncated to MAX_BODY_BYTES by _truncateEntry. Entries already
-    // come redacted from injected.js.
-    const lines = captured.map((entry) => _toJsonlLine(entry));
-    const data = lines.join('\n') + (lines.length > 0 ? '\n' : '');
-    const filename = `are-capture-${preset}-${isoStamp}.jsonl`;
-    respond({ data, filename, format: 'jsonl', lineCount: lines.length });
-    return true;
-  }
-
-  if (msg.type === 'CLEAR') {
-    captured = [];
-    uniqueKeys = new Set();
-    totalBytes = 0; // Bug fix 2026-06-24: reset memory tracker too
-    _persistSession();
-
-    chrome.tabs.query({}, (tabs) => {
-      tabs.forEach((tab) => {
-        if (tab.id) {
-          try { chrome.action.setBadgeText({ text: '', tabId: tab.id }); } catch (e) {}
+        // Close the OPFS access handle (keep the file handle for download).
+        if (opfsBuffer) {
+          opfsBuffer.close();
         }
-      });
+
+        if (recordingTabId && typeof chrome !== 'undefined' && chrome.tabs) {
+          try {
+            chrome.tabs.sendMessage(recordingTabId, { type: 'STOP_RECORDING' }).catch(function () {});
+            if (chrome.action) chrome.action.setBadgeText({ text: '', tabId: recordingTabId });
+          } catch (e) {}
+        }
+        recordingTabId = null;
+
+        respond({ ok: true });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // DOWNLOAD
+      // -----------------------------------------------------------------------
+      if (msg.type === 'DOWNLOAD') {
+        var format = msg.format || outputFormat || 'jsonl';
+        var site = msg.site || 'unknown';
+        var preset = (captureConfig && captureConfig.preset) || 'generic';
+        var isoStamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
+
+        if (format === 'json-array') {
+          // Legacy v1.2.3 shape — uses the in-memory array snapshot.
+          // In OPFS mode the array is empty (we can't enumerate JSONL
+          // lines back into objects cheaply), so the legacy output is
+          // a best-effort: meta + uniqueEndpoints=0 + all=[].
+          var snapshot = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
+          var unique2 = {};
+          snapshot.forEach(function (r) {
+            var k = r.method + ':' + r.url.split('?')[0];
+            if (!unique2[k] || r.isNewEndpoint) unique2[k] = r;
+          });
+          var data = {
+            meta: {
+              capturedAt: new Date().toISOString(),
+              total: inMemoryCount,
+              uniqueEndpoints: Object.keys(unique2).length,
+              site: site,
+              preset: preset
+            },
+            endpoints: Object.values(unique2),
+            all: snapshot
+          };
+          respond({
+            data: JSON.stringify(data, null, 2),
+            filename: 'api-capture-' + preset + '-' + isoStamp + '.json',
+            format: 'json-array'
+          });
+          return true;
+        }
+
+        // JSONL (v1.3.0 default) — read from the OPFS file if active, else
+        // serialise the in-memory array.
+        if (activeBuffer === opfsBuffer && opfsBuffer && !opfsBuffer.inFallbackMode() && typeof opfsBuffer.getFile === 'function') {
+          opfsBuffer.getFile().then(function (file) {
+            return file.arrayBuffer();
+          }).then(function (buf) {
+            // Convert to base64 so the message payload survives the
+            // structured-clone transport (ArrayBuffer is OK, but base64
+            // is portable and tested). Then in the popup we decode + Blob.
+            var bytes = new Uint8Array(buf);
+            var bin = '';
+            for (var i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
+            var b64 = (typeof btoa === 'function') ? btoa(bin) : Buffer.from(bin, 'binary').toString('base64');
+            respond({
+              data: b64,
+              encoding: 'base64',
+              mime: 'application/x-ndjson',
+              filename: 'are-capture-' + preset + '-' + isoStamp + '.jsonl',
+              format: 'jsonl',
+              lineCount: inMemoryCount,
+              bytes: bytes.byteLength
+            });
+          }).catch(function (e) {
+            console.error('[ARE] OPFS read failed, falling back to in-memory JSONL:', e);
+            respond(_buildJsonlFromMemory(preset, isoStamp));
+          });
+          return true; // async response
+        }
+
+        // Fallback: serialise memoryBuffer snapshot as before.
+        respond(_buildJsonlFromMemory(preset, isoStamp));
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // CLEAR
+      // -----------------------------------------------------------------------
+      if (msg.type === 'CLEAR') {
+        if (opfsBuffer) {
+          opfsBuffer.clear().catch(function (e) {
+            console.error('[ARE] OPFS clear failed:', e);
+          });
+        }
+        if (memoryBuffer) memoryBuffer.clear();
+        inMemoryUnique = new Set();
+        inMemoryCount = 0;
+        activeBuffer = null;
+        _persistSession();
+
+        if (typeof chrome !== 'undefined' && chrome.tabs) {
+          chrome.tabs.query({}, function (tabs) {
+            tabs.forEach(function (tab) {
+              if (tab.id && chrome.action) {
+                try { chrome.action.setBadgeText({ text: '', tabId: tab.id }); } catch (e) {}
+              }
+            });
+          });
+        }
+
+        respond({ ok: true });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // GET_PREVIEW
+      // -----------------------------------------------------------------------
+      if (msg.type === 'GET_PREVIEW') {
+        // In OPFS mode, we don't have the raw array in memory. The popup's
+        // preview feature is best-effort: in OPFS mode we return an empty
+        // list (the popup will display "Grabando…" while recording, and
+        // the user can still download the full file). In fallback mode we
+        // can return the same preview as v1.3.2.
+        if (activeBuffer === opfsBuffer && opfsBuffer && !opfsBuffer.inFallbackMode()) {
+          respond({ endpoints: [], opfsMode: true });
+          return true;
+        }
+        var snapshot2 = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
+        var unique3 = {};
+        snapshot2.forEach(function (r) {
+          var k = r.method + ':' + r.url.split('?')[0];
+          if (!unique3[k]) unique3[k] = r;
+        });
+        respond({ endpoints: Object.values(unique3).slice(-20) });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // GET_PRESETS
+      // -----------------------------------------------------------------------
+      if (msg.type === 'GET_PRESETS') {
+        respond({
+          presets: [
+            { id: 'generic', label: '[Generic]', sortOrder: 99 },
+            { id: 'linkedin-voyager', label: '[LinkedIn Voyager]', sortOrder: 1 },
+            { id: 'graphql', label: '[GraphQL]', sortOrder: 2 },
+            { id: 'json-api', label: '[JSON API]', sortOrder: 3 }
+          ],
+          defaultPresetId: 'linkedin-voyager'
+        });
+        return true;
+      }
     });
-
-    respond({ ok: true });
-    return true;
   }
 
-  if (msg.type === 'GET_PREVIEW') {
-    const unique = {};
-    captured.forEach((r) => {
-      const key = `${r.method}:${r.url.split('?')[0]}`;
-      if (!unique[key]) unique[key] = r;
-    });
-    respond({ endpoints: Object.values(unique).slice(-20) });
-    return true;
-  }
-
-  if (msg.type === 'GET_PRESETS') {
-    // Pulled from the same constants injected.js uses. Kept here so the popup
-    // can render the dropdown without bundling the helpers into the popup.
-    respond({
-      presets: [
-        { id: 'generic', label: '[Generic]', sortOrder: 99 },
-        { id: 'linkedin-voyager', label: '[LinkedIn Voyager]', sortOrder: 1 },
-        { id: 'graphql', label: '[GraphQL]', sortOrder: 2 },
-        { id: 'json-api', label: '[JSON API]', sortOrder: 3 }
-      ],
-      defaultPresetId: 'linkedin-voyager'
-    });
-    return true;
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Truncation + binary skip (applied in background; defence in depth)
-// ---------------------------------------------------------------------------
-
-const BINARY_TYPES = /^(image\/|video\/|audio\/|application\/octet-stream|application\/pdf|application\/zip|font\/)/;
-
-function _truncateEntry(entry) {
-  if (!entry) return entry;
-  const out = Object.assign({}, entry);
-
-  // Truncate requestBody if it is a giant string
-  if (typeof out.requestBody === 'string' && out.requestBody.length > MAX_BODY_BYTES) {
-    out.requestBody = out.requestBody.slice(0, MAX_BODY_BYTES);
-    out.requestBodyTruncated = true;
-  }
-
-  // Response body — handle binary skip first, then size cap.
-  const contentType = (out.responseHeaders && (out.responseHeaders['content-type'] || out.responseHeaders['Content-Type'])) || '';
-  const rawBodyBytes = _byteLength(out.responseBody);
-  out.responseBodyBytes = rawBodyBytes;
-
-  if (BINARY_TYPES.test(String(contentType).toLowerCase().trim())) {
-    out.responseBody = {
-      _skipped: 'binary',
-      _contentType: contentType,
-      _contentLength: rawBodyBytes
+  function _buildJsonlFromMemory(preset, isoStamp) {
+    var snapshot = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
+    var lines = snapshot.map(function (e) { return _toJsonlLine(e); });
+    var data = lines.join('\n') + (lines.length > 0 ? '\n' : '');
+    return {
+      data: data,
+      filename: 'are-capture-' + preset + '-' + isoStamp + '.jsonl',
+      format: 'jsonl',
+      lineCount: lines.length
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Truncation + binary skip (applied in background; defence in depth)
+  // ---------------------------------------------------------------------------
+  var BINARY_TYPES = /^(image\/|video\/|audio\/|application\/octet-stream|application\/pdf|application\/zip|font\/)/;
+
+  function _truncateEntry(entry) {
+    if (!entry) return entry;
+    var out = Object.assign({}, entry);
+    if (typeof out.requestBody === 'string' && out.requestBody.length > MAX_BODY_BYTES) {
+      out.requestBody = out.requestBody.slice(0, MAX_BODY_BYTES);
+      out.requestBodyTruncated = true;
+    }
+    var contentType = (out.responseHeaders && (out.responseHeaders['content-type'] || out.responseHeaders['Content-Type'])) || '';
+    var rawBodyBytes = _byteLength(out.responseBody);
+    out.responseBodyBytes = rawBodyBytes;
+    if (BINARY_TYPES.test(String(contentType).toLowerCase().trim())) {
+      out.responseBody = { _skipped: 'binary', _contentType: contentType, _contentLength: rawBodyBytes };
+      return out;
+    }
+    if (typeof out.responseBody === 'string' && out.responseBody.length > MAX_BODY_BYTES) {
+      var preview = out.responseBody.slice(0, MAX_BODY_BYTES);
+      out.responseBody = { _truncated: true, _originalBytes: rawBodyBytes, _keptBytes: _byteLength(preview), _preview: preview };
+    } else if (out.responseBody && typeof out.responseBody === 'object' && rawBodyBytes > MAX_BODY_BYTES) {
+      out.responseBody = { _truncated: true, _originalBytes: rawBodyBytes, _note: 'object body exceeded 5 MB; not preserved in capture' };
+    }
     return out;
   }
 
-  if (typeof out.responseBody === 'string' && out.responseBody.length > MAX_BODY_BYTES) {
-    const preview = out.responseBody.slice(0, MAX_BODY_BYTES);
-    out.responseBody = {
-      _truncated: true,
-      _originalBytes: rawBodyBytes,
-      _keptBytes: _byteLength(preview),
-      _preview: preview
-    };
-  } else if (out.responseBody && typeof out.responseBody === 'object' && rawBodyBytes > MAX_BODY_BYTES) {
-    // For object bodies we don't try to partial-truncate; we record size.
-    out.responseBody = {
-      _truncated: true,
-      _originalBytes: rawBodyBytes,
-      _note: 'object body exceeded 5 MB; not preserved in capture'
-    };
+  function _byteLength(value) {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'string') return value.length;
+    try { return JSON.stringify(value).length; } catch (e) { return 0; }
   }
 
-  return out;
-}
-
-function _byteLength(value) {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === 'string') return value.length; // approximation; UTF-8 byte length can differ but length is good enough for the cap signal
-  try {
-    return JSON.stringify(value).length;
-  } catch (e) {
-    return 0;
+  function _estimateEntryBytes(entry) {
+    if (!entry) return 0;
+    var bytes = 256;
+    bytes += _byteLength(entry.url);
+    bytes += _byteLength(entry.requestBody);
+    bytes += _byteLength(entry.responseBody);
+    bytes += _byteLength(entry.requestHeaders) + _byteLength(entry.responseHeaders);
+    return bytes;
   }
-}
 
-// Bug fix 2026-06-24: estimate the in-memory size of a single captured entry.
-// Used to track totalBytes for FIFO eviction. Approximation — counts the
-// body sizes (the dominant contributor) and a flat per-entry overhead.
-function _estimateEntryBytes(entry) {
-  if (!entry) return 0;
-  let bytes = 256; // flat overhead for the wrapper object + URL + method + headers keys
-  bytes += _byteLength(entry.url);
-  bytes += _byteLength(entry.requestBody);
-  bytes += _byteLength(entry.responseBody);
-  bytes += _byteLength(entry.requestHeaders) + _byteLength(entry.responseHeaders);
-  return bytes;
-}
+  // ---------------------------------------------------------------------------
+  // JSONL serialization — one event per line, LF terminated, UTF-8 no BOM.
+  // Same shape as v1.3.2 (compatible with the linkedin-all-in-one-api importer).
+  // ---------------------------------------------------------------------------
+  function _toJsonlLine(entry) {
+    var line = {
+      ts: entry.timestamp || new Date().toISOString(),
+      tab: recordingTabId,
+      preset: entry.preset || (captureConfig && captureConfig.preset) || 'generic',
+      request: {
+        method: entry.method,
+        url: entry.url,
+        headers: entry.requestHeaders || {},
+        body: entry.requestBody === undefined ? null : entry.requestBody
+      },
+      response: {
+        status: entry.status,
+        headers: entry.responseHeaders || {},
+        body: entry.responseBody === undefined ? null : entry.responseBody,
+        bodyBytes: entry.responseBodyBytes || 0
+      },
+      duration_ms: entry.duration
+    };
+    if (entry.error) line.error = entry.error;
+    return JSON.stringify(line);
+  }
 
-// ---------------------------------------------------------------------------
-// JSONL serialization — one event per line, LF terminated, UTF-8 no BOM.
-// The "shape" of each entry matches the spec's field reference (ts, tab,
-// preset, request{method,url,headers,body}, response{status,headers,body,
-// bodyBytes}, duration_ms). Fields already redacted in injected.js.
-// ---------------------------------------------------------------------------
-
-function _toJsonlLine(entry) {
-  const line = {
-    ts: entry.timestamp || new Date().toISOString(),
-    tab: recordingTabId,
-    preset: entry.preset || (captureConfig && captureConfig.preset) || 'generic',
-    request: {
-      method: entry.method,
-      url: entry.url,
-      headers: entry.requestHeaders || {},
-      body: entry.requestBody === undefined ? null : entry.requestBody
-    },
-    response: {
-      status: entry.status,
-      headers: entry.responseHeaders || {},
-      body: entry.responseBody === undefined ? null : entry.responseBody,
-      bodyBytes: entry.responseBodyBytes || 0
-    },
-    duration_ms: entry.duration
+  // Expose internals for tests / introspection. The SW context doesn't
+  // touch these; they exist for node-side unit tests + the
+  // `node -e "import('./src/background.js')"` smoke validation.
+  return {
+    MAX_EVENTS: MAX_EVENTS,
+    WARNING_AT: WARNING_AT,
+    _truncateEntry: _truncateEntry,
+    _byteLength: _byteLength,
+    _estimateEntryBytes: _estimateEntryBytes,
+    _toJsonlLine: _toJsonlLine,
+    _buildJsonlFromMemory: _buildJsonlFromMemory,
+    getState: function () {
+      return {
+        inMemoryCount: inMemoryCount,
+        uniqueSize: inMemoryUnique.size,
+        isRecording: isRecording,
+        opfsAvailable: opfsAvailable,
+        activeBufferIsOpfs: activeBuffer === opfsBuffer,
+        fallbackMode: !activeBuffer || activeBuffer === memoryBuffer || (opfsBuffer && opfsBuffer.inFallbackMode())
+      };
+    }
   };
-  if (entry.error) line.error = entry.error;
-  return JSON.stringify(line);
-}
+}));
