@@ -84,6 +84,38 @@ The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   one-click workflow is unchanged: open popup → Start → use site → Stop
   → Download.
 
+## [1.3.1] — 2026-06-24 — Capture Mode bugfix
+
+### Fixed
+
+- **LinkedIn Voyager preset captured nothing.** The preset's URL filter
+  regex was stored as a raw `^...` string in `PRESET_DEFAULTS`. When the
+  user selected the preset, `applyPreset` wrote it into the URL filter
+  textarea, and `buildCaptureConfig` parsed each line. The parser only
+  treats `/regex/flags` as regex (slash-wrapped form), so the unwrapped
+  regex fell through to the literal-substring case — producing a filter
+  that matched no real LinkedIn URL. Fix: wrap the preset regex in
+  `/.../` so the round-trip through the textarea preserves the regex
+  type. Pattern now reads
+  `/^https:\/\/www\.linkedin\.com\/(voyager\/api\/|li\/track)/`.
+- **Detener button did not appear after starting capture, REQUESTS
+  counter stuck at 0.** `isRecording` is a module-level variable that
+  starts at `false` on every popup open. The polling `setInterval` only
+  fired `refreshPreview` when `isRecording` was `true`; if the initial
+  `GET_STATE` response was delayed (service worker cold start), the UI
+  stayed on `Iniciar` indefinitely even though the background was
+  actively recording. Fix: when `!isRecording`, still poll `GET_STATE`
+  every 1.5s so the popup recovers from the initial race within one
+  tick of opening.
+
+### Notes
+
+- Version bumped 1.3.0 → 1.3.1 (patch: bugfix only, no API surface change).
+- All Capture Mode v1.3.0 features unchanged: presets, multi-line filter,
+  redaction at injection site, JSONL output.
+- Privacy posture unchanged: redaction default ON, no raw secrets leave
+  the user's machine.
+
 ## [1.2.3] — earlier release
 
 Initial published version on the Chrome Web Store. Single-string URL
