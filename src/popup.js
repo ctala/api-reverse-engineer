@@ -295,15 +295,50 @@ btnDownload.addEventListener('click', async () => {
   const format = outputFormatRadio ? outputFormatRadio.value : 'jsonl';
 
   chrome.runtime.sendMessage({ type: 'DOWNLOAD', site, format }, (res) => {
-    if (!res || !res.data) return;
-    const mime = format === 'json-array' ? 'application/json' : 'application/x-ndjson';
-    const blob = new Blob([res.data], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    if (!res) {
+      console.error('[ARE Popup] DOWNLOAD got no response from SW');
+      return;
+    }
+    if (res.ok === false) {
+      // Bug fix 2026-06-24: SW returns {ok:false, error: '...'} on empty
+      // or failed downloads. Show the user what went wrong.
+      console.warn('[ARE Popup] Download refused:', res.error);
+      alert('No se puede descargar: ' + (res.error || 'unknown error'));
+      return;
+    }
+    if (!res.data) {
+      console.error('[ARE Popup] DOWNLOAD response missing data field', res);
+      return;
+    }
+
+    // Bug fix 2026-06-24: SW returns binary data base64-encoded since v1.4.0
+    // (raw text transport can't survive large buffers in the structured-
+    // clone message protocol). Decode here if encoding === 'base64'.
+    var bytes;
+    if (res.encoding === 'base64') {
+      try {
+        var bin = atob(res.data);
+        var arr = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        bytes = arr;
+      } catch (e) {
+        console.error('[ARE Popup] base64 decode failed:', e);
+        alert('Download data corruption: ' + e.message);
+        return;
+      }
+    } else {
+      // Legacy v1.3.x path: SW sent raw string. Wrap as Uint8Array for Blob.
+      bytes = new TextEncoder().encode(res.data);
+    }
+
+    var mime = format === 'json-array' ? 'application/json' : 'application/x-ndjson';
+    var blob = new Blob([bytes], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
     a.href = url;
     a.download = res.filename || (format === 'json-array'
-      ? `api-capture-${site}-${Date.now()}.json`
-      : `are-capture-${site}-${Date.now()}.jsonl`);
+      ? 'api-capture-' + site + '-' + Date.now() + '.json'
+      : 'are-capture-' + site + '-' + Date.now() + '.jsonl');
     a.click();
     URL.revokeObjectURL(url);
   });

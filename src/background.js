@@ -1,9 +1,36 @@
 /**
- * API Reverse Engineer — Background Service Worker (v1.4.0)
+ * API Reverse Engineer — Background Service Worker (v1.4.2)
  *
  * Capture Mode + OPFS streaming buffer per ADR-0002.
  *
- * Buffer architecture (v1.4.0):
+ * v1.4.2 — runtime bug fixes (counter, badge, download) + QA harness.
+ *   - bug #1 fix: activeBuffer is now `memoryBuffer` SYNCHRONOUSLY when
+ *     START runs, then upgraded to opfsBuffer async once the OPFS file
+ *     is open. CAPTUREs that arrive during the OPFS init window go to
+ *     memory (counted + retrievable) and are migrated to the OPFS file
+ *     once init resolves — no silent loss, no duplicates in the output.
+ *   - bug #2 fix (counter): the counter now reflects the active buffer
+ *     at all times because memoryBuffer is always safe. v1.4.1 dropped
+ *     early CAPTUREs because `if (activeBuffer)` was false during the
+ *     OPFS init window.
+ *   - bug #2 fix (badge UX): the badge is now driven by the `isRecording`
+ *     flag, not by the counter. While recording, the badge shows a red
+ *     dot `●` (text+background). The counter goes in the popup only.
+ *     v1.4.1 alternated between `●` and the count on every CAPTURE.
+ *   - bug #3 fix (download): DOWNLOAD now validates `inMemoryCount > 0`
+ *     up front and returns `{ok: false, error: ...}` if there is nothing
+ *     to download. The OPFS → memory fallback path returns
+ *     `{ok: true, ...}` on success and `{ok: false, error: ...}` if BOTH
+ *     paths fail (was: silent empty JSONL).
+ *   - bug #4 fix (atomic badge): START / STOP / AUTO_STOP all call
+ *     `_setBadge(tabId)` immediately so the badge always reflects the
+ *     isRecording state. SW restore (line 100-115) also sets the badge
+ *     if isRecording was true.
+ *   - defensive: if `activeBuffer` is null when a CAPTURE arrives but
+ *     isRecording is true (e.g. after SW restart), fall back to the
+ *     memory buffer so captures are not silently dropped.
+ *
+ * Buffer architecture (v1.4.0 + v1.4.2 race fix):
  *   - Primary path: append streaming writes to `captures.jsonl` in the
  *     extension's OPFS via `OpfsBuffer` (src/opfs-buffer.js). One entry
  *     per line, JSONL format. Survives SW restart, browser close, OOM.
@@ -11,15 +38,15 @@
  *     call throws), fall back to the v1.3.2 in-memory array. The plugin
  *     still works, but the OOM risk returns. We surface a warning
  *     (yellow badge) so the user knows the capture is in fallback mode.
+ *   - During START, activeBuffer = memoryBuffer synchronously. The async
+ *     OPFS upgrade, when it resolves, migrates the memory snapshot to
+ *     the OPFS file and switches activeBuffer to opfsBuffer.
  *
  * Counters:
  *   - `inMemoryCount` (number): total events captured this session, kept
- *     in module-level memory. Used for the badge and GET_STATE.total.
+ *     in module-level memory. Used for GET_STATE.total and DOWNLOAD validation.
  *   - `inMemoryUnique` (Set<string>): dedup keys (METHOD:URL-without-query).
  *     Used for GET_STATE.unique. Cleared on START and CLEAR.
- *   - `captured[]` (Array): ONLY used in the v1.3.2 fallback path. If
- *     OPFS init succeeds this array stays empty; if OPFS init fails, all
- *     writes go here and DOWNLOAD reads from it.
  *
  * Privacy:
  *   - Redaction happens at the injection site (injected.js MAIN world) so
@@ -89,6 +116,10 @@
   // ---------------------------------------------------------------------------
   // chrome.storage.session — restore isRecording / config on SW wake-up
   // (Captures themselves live in OPFS now, so we don't persist the array.)
+  // v1.4.2: also restore the badge (red dot) so the user sees the recording
+  // state after a SW restart. If activeBuffer is null, fall back to the
+  // memory buffer synchronously so the first CAPTURE after restart goes
+  // somewhere safe (was silently dropped in v1.4.1).
   // ---------------------------------------------------------------------------
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
     chrome.storage.session.get(
@@ -100,6 +131,14 @@
           captureConfig = data.captureConfig || null;
           outputFormat = data.outputFormat || 'jsonl';
           filterMode = data.filterMode || 'OR';
+          // SW restart reset activeBuffer to null. Re-point it to the safe
+          // memory buffer so the first CAPTURE after restart doesn't get
+          // dropped by the `if (activeBuffer)` guard in the CAPTURE handler.
+          if (!activeBuffer && memoryBuffer) {
+            activeBuffer = memoryBuffer;
+          }
+          // Restore the red-dot badge so the user sees the recording state.
+          if (recordingTabId) _setBadge(recordingTabId);
           // captured[] and counters start empty after SW restart.
           // The OPFS file persists on disk, so on the next START we truncate
           // it (fresh session per ADR-0002 decision). If the user wants to
@@ -160,17 +199,29 @@
     });
   }
 
-  function _setBadge(count, tabId) {
+  /**
+   * v1.4.2: badge is now driven purely by `isRecording` (not by the
+   * counter). While recording, the badge shows a red dot `●` with the
+   * accent background colour. The counter goes in the popup only —
+   * v1.4.1 alternated between `●` and the count on every CAPTURE which
+   * was a UX bug. When not recording, the badge is cleared.
+   *
+   * Signature: `_setBadge(tabId)`. The `count` parameter from v1.4.1
+   * has been removed (it was the source of the alternating bug).
+   */
+  function _setBadge(tabId) {
     if (typeof chrome === 'undefined' || !chrome.action) return;
     if (!tabId) return;
-    var text = count >= WARNING_AT ? (count + '!') : String(count);
-    var color = '#22c55e'; // default green
-    if (count >= WARNING_AT) color = '#f59e0b'; // amber
-    if (activeBuffer && activeBuffer.inFallbackMode && activeBuffer.inFallbackMode()) color = '#eab308'; // yellow = fallback mode
-    try {
-      chrome.action.setBadgeText({ text: text, tabId: tabId });
-      chrome.action.setBadgeBackgroundColor({ color: color, tabId: tabId });
-    } catch (e) {}
+    if (isRecording) {
+      // While recording, show red dot. Counter goes in popup only.
+      try {
+        chrome.action.setBadgeText({ text: '●', tabId: tabId });
+        chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: tabId });
+      } catch (e) {}
+      return;
+    }
+    // When stopped, clear badge.
+    try { chrome.action.setBadgeText({ text: '', tabId: tabId }); } catch (e) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -204,6 +255,14 @@
 
         var entryWithMeta = Object.assign({}, processed, { isNewEndpoint: isNew });
 
+        // v1.4.2 defensive: if activeBuffer is null (e.g. after SW restart
+        // before the restore callback finished) but we're still in a
+        // recording state, fall back to the memory buffer so the CAPTURE
+        // isn't silently dropped. Pre-empts the v1.4.1 silent-loss bug.
+        if (!activeBuffer && isRecording && memoryBuffer) {
+          activeBuffer = memoryBuffer;
+        }
+
         if (activeBuffer) {
           var wrote = activeBuffer.append(entryWithMeta);
           if (wrote) {
@@ -224,10 +283,13 @@
         if (inMemoryCount >= MAX_EVENTS) {
           isRecording = false;
           console.warn('[ARE] Reached ' + MAX_EVENTS + ' events, auto-stopping');
+          // v1.4.2: atomic badge clear on auto-stop.
+          _setBadge(recordingTabId);
         }
 
         _persistSession();
-        _setBadge(inMemoryCount, tabId);
+        // v1.4.2: badge is driven by isRecording flag (no count). No call
+        // to _setBadge here — START/STOP/AUTO_STOP own the badge.
 
         respond({ ok: true });
         return true;
@@ -257,6 +319,11 @@
 
       // -----------------------------------------------------------------------
       // START
+      // v1.4.2: activeBuffer is memoryBuffer SYNCHRONOUSLY (was: null until
+      // the async OPFS init resolved, dropping every CAPTURE in the init
+      // window). The OPFS upgrade still happens async; on success we
+      // migrate the memory snapshot to the OPFS file and switch the active
+      // buffer. No duplicates in the output, no silent loss.
       // -----------------------------------------------------------------------
       if (msg.type === 'START') {
         isRecording = true;
@@ -271,27 +338,40 @@
         inMemoryUnique = new Set();
         if (memoryBuffer) memoryBuffer.clear();
 
-        // Open the OPFS file (truncates any previous session).
+        // SYNCHRONOUS fallback: memoryBuffer is always safe. OPFS upgrade
+        // happens async below — captures during the init window go to the
+        // memory buffer (counted + retrievable).
+        activeBuffer = memoryBuffer;
+        opfsAvailable = false;
+
+        // ASYNC OPFS upgrade (best-effort).
         if (opfsBuffer) {
-          // Don't await — keep handler non-blocking. If init fails the
-          // first CAPTURE switches to the memory buffer.
           opfsBuffer.init().then(function (ok) {
-            opfsAvailable = ok;
-            if (ok) {
+            if (ok && isRecording) {
+              // Migrate any captures we accumulated during the init
+              // window from memoryBuffer to OPFS. We append, NOT copy +
+              // truncate, so the order is preserved and the output is a
+              // single contiguous JSONL stream.
+              var existing = memoryBuffer.snapshot();
               activeBuffer = opfsBuffer;
-              console.log('[ARE] OPFS streaming buffer ready (captures.jsonl)');
-            } else {
+              for (var i = 0; i < existing.length; i++) {
+                opfsBuffer.append(existing[i]);
+              }
+              opfsAvailable = true;
+              inMemoryCount = opfsBuffer.getCount();
+              _setBadge(recordingTabId);
+              console.log('[ARE] OPFS ready, migrated ' + existing.length + ' captures from memory buffer');
+            } else if (!ok && isRecording) {
+              // OPFS init failed — keep the memory buffer as the active
+              // buffer. The download path will fall back to memory JSONL.
               activeBuffer = memoryBuffer;
-              console.warn('[ARE] OPFS unavailable, using in-memory fallback (v1.3.2 mode)');
+              opfsAvailable = false;
+              console.warn('[ARE] OPFS unavailable, using in-memory fallback');
             }
           }).catch(function (e) {
-            console.error('[ARE] OPFS init threw, using in-memory fallback:', e);
-            opfsAvailable = false;
-            activeBuffer = memoryBuffer;
+            console.error('[ARE] OPFS init failed, staying on memory buffer:', e);
+            if (isRecording) activeBuffer = memoryBuffer;
           });
-        } else {
-          opfsAvailable = false;
-          activeBuffer = memoryBuffer;
         }
 
         _persistSession();
@@ -300,12 +380,8 @@
           chrome.storage.local.set({ filter: filter, captureConfig: captureConfig, outputFormat: outputFormat, filterMode: filterMode });
         }
 
-        if (recordingTabId && typeof chrome !== 'undefined' && chrome.action) {
-          try {
-            chrome.action.setBadgeText({ text: '●', tabId: recordingTabId });
-            chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: recordingTabId });
-          } catch (e) {}
-        }
+        // v1.4.2: atomic badge update on START (red dot, not counter).
+        _setBadge(recordingTabId);
 
         if (recordingTabId && typeof chrome !== 'undefined' && chrome.scripting) {
           chrome.scripting.executeScript({
@@ -361,9 +437,11 @@
         if (recordingTabId && typeof chrome !== 'undefined' && chrome.tabs) {
           try {
             chrome.tabs.sendMessage(recordingTabId, { type: 'STOP_RECORDING' }).catch(function () {});
-            if (chrome.action) chrome.action.setBadgeText({ text: '', tabId: recordingTabId });
           } catch (e) {}
         }
+        // v1.4.2: atomic badge clear on STOP. We do this BEFORE clearing
+        // recordingTabId so the badge lands on the right tab.
+        if (recordingTabId) _setBadge(recordingTabId);
         recordingTabId = null;
 
         respond({ ok: true });
@@ -372,12 +450,29 @@
 
       // -----------------------------------------------------------------------
       // DOWNLOAD
+      // v1.4.2: validate `inMemoryCount > 0` up front and return
+      // `{ok: false, error: ...}` if there's nothing to download. The
+      // OPFS → memory fallback path returns `{ok: false, error: ...}`
+      // if BOTH paths fail (was: silent empty JSONL in v1.4.1). The
+      // popup surfaces the error to the user.
       // -----------------------------------------------------------------------
       if (msg.type === 'DOWNLOAD') {
         var format = msg.format || outputFormat || 'jsonl';
         var site = msg.site || 'unknown';
         var preset = (captureConfig && captureConfig.preset) || 'generic';
         var isoStamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
+
+        // v1.4.2: short-circuit on empty capture. The user needs to know
+        // why nothing downloaded (silent failure was the v1.4.1 bug).
+        if (inMemoryCount <= 0) {
+          respond({
+            ok: false,
+            error: 'No captures to download. Did you navigate a page after clicking Iniciar?',
+            format: format,
+            lineCount: 0
+          });
+          return true;
+        }
 
         if (format === 'json-array') {
           // Legacy v1.2.3 shape — uses the in-memory array snapshot.
@@ -402,6 +497,7 @@
             all: snapshot
           };
           respond({
+            ok: true,
             data: JSON.stringify(data, null, 2),
             filename: 'api-capture-' + preset + '-' + isoStamp + '.json',
             format: 'json-array'
@@ -409,8 +505,10 @@
           return true;
         }
 
-        // JSONL (v1.3.0 default) — read from the OPFS file if active, else
-        // serialise the in-memory array.
+        // JSONL (v1.3.0 default) — try OPFS first if active, else serialise
+        // the in-memory array. Always fall back to memory on any OPFS
+        // failure. If both paths fail, return ok:false so the popup can
+        // show the user what went wrong.
         if (activeBuffer === opfsBuffer && opfsBuffer && !opfsBuffer.inFallbackMode() && typeof opfsBuffer.getFile === 'function') {
           opfsBuffer.getFile().then(function (file) {
             return file.arrayBuffer();
@@ -423,6 +521,7 @@
             for (var i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
             var b64 = (typeof btoa === 'function') ? btoa(bin) : Buffer.from(bin, 'binary').toString('base64');
             respond({
+              ok: true,
               data: b64,
               encoding: 'base64',
               mime: 'application/x-ndjson',
@@ -433,13 +532,24 @@
             });
           }).catch(function (e) {
             console.error('[ARE] OPFS read failed, falling back to in-memory JSONL:', e);
-            respond(_buildJsonlFromMemory(preset, isoStamp));
+            var memFallback = _buildJsonlFromMemory(preset, isoStamp);
+            if (memFallback.lineCount > 0) {
+              respond(memFallback);
+            } else {
+              respond({
+                ok: false,
+                error: 'Download failed: OPFS read error and in-memory buffer is empty. ' + (e && e.message || String(e)),
+                format: 'jsonl',
+                lineCount: 0
+              });
+            }
           });
           return true; // async response
         }
 
         // Fallback: serialise memoryBuffer snapshot as before.
-        respond(_buildJsonlFromMemory(preset, isoStamp));
+        var memResult = _buildJsonlFromMemory(preset, isoStamp);
+        respond(memResult);
         return true;
       }
 
@@ -516,9 +626,22 @@
   function _buildJsonlFromMemory(preset, isoStamp) {
     var snapshot = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
     var lines = snapshot.map(function (e) { return _toJsonlLine(e); });
-    var data = lines.join('\n') + (lines.length > 0 ? '\n' : '');
+    var raw = lines.join('\n') + (lines.length > 0 ? '\n' : '');
+    // v1.4.2: encode as base64 uniformly so the popup can decode both
+    // the OPFS and memory paths with the same code. The v1.4.1 dual
+    // format (OPFS = base64, memory = string) caused the popup to
+    // produce a base64-text file when OPFS was active.
+    var b64;
+    try {
+      b64 = (typeof btoa === 'function') ? btoa(unescape(encodeURIComponent(raw))) : Buffer.from(raw, 'utf-8').toString('base64');
+    } catch (e) {
+      b64 = Buffer.from(raw, 'utf-8').toString('base64');
+    }
     return {
-      data: data,
+      ok: true,
+      data: b64,
+      encoding: 'base64',
+      mime: 'application/x-ndjson',
       filename: 'are-capture-' + preset + '-' + isoStamp + '.jsonl',
       format: 'jsonl',
       lineCount: lines.length
