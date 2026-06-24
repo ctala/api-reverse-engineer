@@ -45,6 +45,15 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     forwardCaptureConfigToInjected();
     respond({ ok: true });
   }
+
+  // Bug fix 2026-06-24: respond to PING so the SW can wait for this content
+  // script's message listener to be registered before sending START_RECORDING.
+  // Without this, the SW races with content script init and the
+  // START_RECORDING message lands in a no-receiver state.
+  if (msg.type === 'PING') {
+    respond({ ready: true, version: '1.4.0' });
+    return;
+  }
 });
 
 function forwardCaptureConfigToInjected() {

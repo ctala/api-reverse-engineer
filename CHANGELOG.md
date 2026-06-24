@@ -146,6 +146,30 @@ is intentional (ADR-0002 §"Decision" + §"Consequences"):
   local-only high-volume storage. The privacy policy declares the
   model: local-first, no upload, user-controlled.
 
+## [1.4.1] — 2026-06-24 — Capture Mode stability hotfix
+
+### Fixed
+
+- **"Receiving end does not exist" on START_RECORDING.** When the user
+  clicked Iniciar, the SW injected the MAIN-world interceptors via
+  `chrome.scripting.executeScript` and then immediately sent
+  `START_RECORDING` via `chrome.tabs.sendMessage`. If the content
+  script's message listener wasn't fully registered yet (race
+  condition on tab load, after reload, or on slow pages), the send
+  landed in a no-receiver state and capture never started. The widget
+  showed the recording state (badge + REQUESTS counter) but no events
+  were intercepted. Fix: poll the content script with PING (timeout
+  2s) before sending START_RECORDING. The content script responds
+  with `{ready: true, version: '1.4.0'}` and the SW proceeds. If the
+  poll times out, log a warning and let the user retry.
+
+### Notes
+
+- Patch bump 1.4.0 → 1.4.1.
+- No new automated tests (the race is hard to test deterministically
+  without a fake content script harness). Manual soak on Cristian's
+  machine will confirm.
+
 ## [1.3.0] — 2026-06-23 — Capture Mode
 
 ### Added

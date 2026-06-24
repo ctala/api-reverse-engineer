@@ -124,6 +124,42 @@
     }
   }
 
+  // Bug fix 2026-06-24: poll the content script (ISOLATED world) until it
+  // responds to PING, with a hard timeout. Fixes the race where the SW
+  // sends START_RECORDING immediately after executeScript resolves but
+  // the content script's message listener isn't registered yet — the
+  // message lands in a no-receiver state and capture never starts.
+  // Returns a promise that resolves to true if the content script
+  // responded, false on timeout.
+  function _waitForContentScript(tabId, timeoutMs) {
+    return new Promise(function (resolve) {
+      if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.tabs.sendMessage) {
+        resolve(false);
+        return;
+      }
+      var deadline = Date.now() + timeoutMs;
+      var attempt = function () {
+        if (Date.now() > deadline) { resolve(false); return; }
+        try {
+          chrome.tabs.sendMessage(tabId, { type: 'PING' }, function (resp) {
+            if (chrome.runtime.lastError) {
+              // No receiver yet — retry after a short delay
+              setTimeout(attempt, 100);
+            } else if (resp && resp.ready === true) {
+              resolve(true);
+            } else {
+              // Some other response; treat as ready (the listener is alive)
+              resolve(true);
+            }
+          });
+        } catch (e) {
+          setTimeout(attempt, 100);
+        }
+      };
+      attempt();
+    });
+  }
+
   function _setBadge(count, tabId) {
     if (typeof chrome === 'undefined' || !chrome.action) return;
     if (!tabId) return;
@@ -278,20 +314,29 @@
             files: ['src/capture-config.js', 'src/injected.js']
           }).then(function () {
             console.log('[ARE] Interceptors injected into MAIN world');
-            chrome.tabs.sendMessage(recordingTabId, {
-              type: 'START_RECORDING',
-              filter: filter
-            }).catch(function (err) {
-              console.warn('[ARE] Failed to send START_RECORDING to tab', recordingTabId, err);
-            });
-            if (captureConfig) {
+            // Bug fix 2026-06-24: content script listener may not be ready
+            // when we send START_RECORDING immediately after executeScript
+            // resolves. Poll for PING response up to 2s, then send.
+            _waitForContentScript(recordingTabId, 2000).then(function (ready) {
+              if (!ready) {
+                console.warn('[ARE] Content script did not respond to PING within 2s. Capture may not start. Reload the tab and try again.');
+                return;
+              }
               chrome.tabs.sendMessage(recordingTabId, {
-                type: 'SET_CAPTURE_CONFIG',
-                captureConfig: captureConfig
+                type: 'START_RECORDING',
+                filter: filter
               }).catch(function (err) {
-                console.warn('[ARE] Failed to send SET_CAPTURE_CONFIG to tab', recordingTabId, err);
+                console.warn('[ARE] Failed to send START_RECORDING to tab', recordingTabId, err);
               });
-            }
+              if (captureConfig) {
+                chrome.tabs.sendMessage(recordingTabId, {
+                  type: 'SET_CAPTURE_CONFIG',
+                  captureConfig: captureConfig
+                }).catch(function (err) {
+                  console.warn('[ARE] Failed to send SET_CAPTURE_CONFIG to tab', recordingTabId, err);
+                });
+              }
+            });
           }).catch(function (err) {
             console.error('[ARE] Failed to inject interceptors:', err);
           });
