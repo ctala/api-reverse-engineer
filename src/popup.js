@@ -93,7 +93,16 @@ function buildCaptureConfig(presetId) {
 function applyPreset(presetId) {
   const defaults = PRESET_DEFAULTS[presetId];
   if (!defaults) return;
-  filterInput.value = defaults.patterns || '';
+  // defaults.patterns is an array of {type, value} objects (see capture-config.js).
+  // The textarea takes a string, so we serialize properly: one pattern value per line.
+  // Bug fix 2026-06-24: previously used `defaults.patterns || ''` which produced
+  // "[object Object],[object Object]" garbage in the textarea and made the
+  // LinkedIn Voyager preset capture nothing.
+  if (Array.isArray(defaults.patterns) && defaults.patterns.length > 0) {
+    filterInput.value = defaults.patterns.map((p) => p.value).join('\n');
+  } else {
+    filterInput.value = '';
+  }
   const radios = document.querySelectorAll('input[name="filterMode"]');
   radios.forEach((r) => { r.checked = (r.value === defaults.filterMode); });
   redactToggle.checked = defaults.redact.enabled !== false;
