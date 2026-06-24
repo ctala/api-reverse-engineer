@@ -37,7 +37,11 @@ const PRESET_DEFAULTS = {
     redact: { enabled: true, headers: ['cookie','set-cookie','authorization','x-api-key','x-auth-token','csrf-token','x-csrf-token'] }
   },
   'linkedin-voyager': {
-    patterns: '^https:\\/\\/www\\.linkedin\\.com\\/(voyager\\/api\\/|li\\/track)',
+    // Bug fix 2026-06-24: patterns MUST be wrapped in /.../ to be parsed as
+    // regex by buildCaptureConfig. Previously stored as raw ^... which was
+    // round-tripped through the textarea and parsed as a literal substring,
+    // matching nothing.
+    patterns: '/^https:\\/\\/www\\.linkedin\\.com\\/(voyager\\/api\\/|li\\/track)/',
     filterMode: 'OR',
     redact: {
       enabled: true,
@@ -315,8 +319,22 @@ btnClear.addEventListener('click', () => {
 });
 
 // Auto-refresh mientras está grabando
+// Bug fix 2026-06-24: also poll the state itself (not just preview when
+// isRecording=true), so we recover from initial GET_STATE race / SW wake
+// delay. Without this, the popup could show 'Iniciar' even when background
+// is actively recording (because isRecording stays false module-level until
+// GET_STATE returns — and the previous polling did nothing when it was false).
 setInterval(() => {
-  if (isRecording) refreshPreview();
+  if (isRecording) {
+    refreshPreview();
+  } else {
+    // Re-fetch state — if SW is now awake and recording, this flips the UI.
+    chrome.runtime.sendMessage({ type: 'GET_STATE' }, (res) => {
+      if (!res) return;
+      isRecording = res.isRecording;
+      updateUI(res.total, res.unique);
+    });
+  }
 }, 1500);
 
 // Iniciar
