@@ -51,7 +51,11 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   // Without this, the SW races with content script init and the
   // START_RECORDING message lands in a no-receiver state.
   if (msg.type === 'PING') {
-    respond({ ready: true, version: '1.4.0' });
+    // B24 fix: derive the version from the manifest instead of a hardcoded
+    // string that drifts (was '1.4.0' while the manifest said '1.4.2').
+    var version = '0.0.0';
+    try { version = chrome.runtime.getManifest().version; } catch (e) {}
+    respond({ ready: true, version: version });
     return;
   }
 });
@@ -79,11 +83,13 @@ window.addEventListener('__ARE_REQUEST__', (event) => {
     return;
   }
 
-  // Filtrar por URL si hay filtro activo (compat v1.2.3 — single-string filter).
-  // Capture Mode v1.3.0 ya filtra en injected.js antes de despachar, pero
-  // mantenemos este check por defense-in-depth y para recordings iniciados
-  // sin captureConfig (legacy path).
-  if (filter && !(entry.url || '').includes(filter)) {
+  // B2 fix: el filtro legacy de substring SOLO aplica al path sin
+  // captureConfig (un keyword simple escrito en la caja de filtro de URL).
+  // Cuando hay un captureConfig estructurado activo, injected.js YA filtró
+  // con los patterns parseados; correr este check acá rompe la captura,
+  // porque para presets regex/glob `filter` es el patrón CRUDO y
+  // `.includes(rawRegex)` nunca matchea una URL real → descarta TODO.
+  if (!captureConfig && filter && !(entry.url || '').includes(filter)) {
     return;
   }
 

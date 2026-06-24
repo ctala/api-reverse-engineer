@@ -16,6 +16,17 @@
 (function () {
   'use strict';
 
+  // B9 fix: guard against double-wrapping. The interceptor is injected via
+  // chrome.scripting.executeScript on every START (and, once enabled, via a
+  // declarative document_start MAIN-world content_script). Without this guard
+  // each injection wraps window.fetch / window.XMLHttpRequest AGAIN, so every
+  // request is dispatched once per wrapper layer → duplicate captures after a
+  // STOP→START on the same page. Idempotent install: re-injection is a no-op,
+  // the original interceptor stays active and keeps receiving captureConfig
+  // updates via the existing postMessage listener.
+  if (window.__ARE_PATCHED__) return;
+  window.__ARE_PATCHED__ = true;
+
   var CC = (typeof window !== 'undefined' && window.CaptureConfig) || null;
   // Capture-config may not have loaded (race or load failure). In that case,
   // fall back to a permissive default (capture everything, no redaction) so
