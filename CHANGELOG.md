@@ -248,6 +248,67 @@ is intentional (ADR-0002 §"Decision" + §"Consequences"):
   local-only high-volume storage. The privacy policy declares the
   model: local-first, no upload, user-controlled.
 
+## [1.4.2] — 2026-06-24 — Runtime bugfixes + QA harness
+
+### Fixed
+
+- **REQUESTS counter stale (async OPFS init race).** When the user
+  clicked Iniciar, `opfsBuffer.init()` was called but `activeBuffer` was
+  set asynchronously in the `.then()` callback. CAPTUREs arriving during
+  the init window (typically 50-200ms) were silently dropped — the
+  `inMemoryUnique.add()` ran (so ÚNICOS went up) but the buffer
+  append was skipped. Fix: set `activeBuffer = memoryBuffer` **synchronously**
+  in START. When OPFS init resolves, the existing memory snapshot is
+  migrated to the OPFS file in order. Zero data loss.
+- **Badge UX: red dot disappeared as soon as the first capture
+  arrived.** `_setBadge(inMemoryCount, tabId)` was called on every
+  CAPTURE and overwrote the red dot with the counter. Fix:
+  `_setBadge(tabId)` is now driven by the `isRecording` flag. The red
+  dot stays for the entire recording. Counter lives in the popup only.
+  START, STOP, AUTO_STOP, and SW restore all update the badge
+  atomically.
+- **Download broken (popup base64 decode missing).** The SW switched
+  to base64-encoded binary data in v1.4.0 (raw text transport can't
+  survive large buffers in the structured-clone message protocol), but
+  the popup's DOWNLOAD handler was never updated — it treated the
+  response as raw text and saved base64-garbage JSONL files. Fix:
+  popup decodes base64 to Uint8Array before creating the Blob.
+  Also handles the new `{ok: false, error: '...'}` response shape from
+  the SW (empty buffer, OPFS failure) with an `alert()` so the user
+  knows why the download was empty.
+- **SW restart: badge blank, CAPTUREs dropped.** After the SW
+  restarted (browser close + reopen, manual reload in
+  `chrome://extensions/`), `isRecording=true` was restored from
+  session storage, but the badge stayed empty and CAPTUREs arriving
+  before OPFS init completed were dropped. Fix: restore callback
+  calls `_setBadge(recordingTabId)`. CAPTURE handler gains a
+  defensive `if (!activeBuffer) activeBuffer = memoryBuffer; if
+  (!activeBuffer) return;` to never silently drop.
+- **Download empty buffer: no user feedback.** If the user clicked
+  Descargar with 0 captures, the SW built an empty JSONL silently.
+  Fix: SW returns `{ok: false, error: 'No captures to download. Did
+  you navigate a page after clicking Iniciar?'}`. Popup alerts the
+  user.
+
+### Added
+
+- **`test/_chrome-mock.js`** — shared mock for `chrome.tabs`,
+  `chrome.runtime`, `chrome.action`, `chrome.storage`, `chrome.scripting`,
+  `chrome.downloads` + OPFS (`navigator.storage.getDirectory`).
+  Enables deterministic Node.js testing of the SW logic.
+- **`test/background.test.mjs`** — 12 regression tests reproducing
+  the 3 bugs Cristian reported + SW restart + OPFS upgrade migration.
+  Catches regressions before they reach the user.
+
+### Notes
+
+- Patch bump 1.4.1 → 1.4.2.
+- 71/71 tests green (34 capture-config + 17 opfs + 8 memory + 12
+  background).
+- The QA harness is Node.js only (no Playwright, no Chrome runtime).
+  Deterministic, fast (~50ms total), no flaky network/timing.
+  Playwright integration is a separate F4 task if needed.
+
 ## [1.4.1] — 2026-06-24 — Capture Mode stability hotfix
 
 ### Fixed
