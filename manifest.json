@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "API Reverse Engineer",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Captura todas las llamadas API mientras navegas. Record \u2192 usa el sitio \u2192 descarga JSON.",
   "permissions": [
     "storage",
     "activeTab",
     "scripting",
-    "tabs"
+    "tabs",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "<all_urls>"
