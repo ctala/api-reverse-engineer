@@ -629,38 +629,7 @@ if (typeof importScripts === 'function') {
           return true;
         }
 
-        if (format === 'json-array') {
-          // Legacy v1.2.3 shape — uses the in-memory array snapshot.
-          // In OPFS mode the array is empty (we can't enumerate JSONL
-          // lines back into objects cheaply), so the legacy output is
-          // a best-effort: meta + uniqueEndpoints=0 + all=[].
-          var snapshot = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
-          var unique2 = {};
-          snapshot.forEach(function (r) {
-            var k = r.method + ':' + r.url.split('?')[0];
-            if (!unique2[k] || r.isNewEndpoint) unique2[k] = r;
-          });
-          var data = {
-            meta: {
-              capturedAt: new Date().toISOString(),
-              total: inMemoryCount,
-              uniqueEndpoints: Object.keys(unique2).length,
-              site: site,
-              preset: preset
-            },
-            endpoints: Object.values(unique2),
-            all: snapshot
-          };
-          respond({
-            ok: true,
-            data: JSON.stringify(data, null, 2),
-            filename: 'api-capture-' + preset + '-' + isoStamp + '.json',
-            format: 'json-array'
-          });
-          return true;
-        }
-
-        // JSONL (v1.3.0 default) — try OPFS first if active, else serialise
+        // JSONL — try OPFS first if active, else serialise
         // the in-memory array. Always fall back to memory on any OPFS
         // failure. If both paths fail, return ok:false so the popup can
         // show the user what went wrong.

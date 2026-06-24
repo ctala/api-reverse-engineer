@@ -4,6 +4,25 @@ All notable changes to API Reverse Engineer are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-06-24 — Descargar cookies (.json) + quitar JSON array legacy
+
+### Changed
+
+- **Cookies: descargar en vez de copiar.** El botón ahora baja un `.json`
+  estructurado (`{ url, host, count, cookieHeader, cookies:[...] }`) en vez de
+  solo copiar al portapapeles — queda un asset reusable para replay (el
+  `cookieHeader` va listo para `curl -H "Cookie: …"` / Postman).
+- **Quitado el formato JSON array legacy v1.2.x.** La salida es siempre
+  JSON-Lines (el selector de formato se removió del popup y la rama json-array
+  del service worker). Una API de captura, un formato.
+
+### Docs
+
+- `PRIVACY-POLICY.md` actualizada para declarar el permiso `cookies` (+
+  `unlimitedStorage`) con su justificación: lectura read-only on-demand al
+  click, guardada localmente, nunca transmitida. (Requisito de revisión del
+  Chrome Web Store al agregar el permiso `cookies`.)
+
 ## [1.6.0] — 2026-06-24 — Preset LinkedIn real + filtro arreglado + Copy Cookies + contador en vivo
 
 ### Fixed

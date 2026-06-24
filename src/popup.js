@@ -119,7 +119,7 @@ function loadState() {
   populatePresetDropdown();
 
   // Restore the last used settings from chrome.storage.local.
-  chrome.storage.local.get(['filter', 'outputFormat', 'presetId', 'redactEnabled'], (data) => {
+  chrome.storage.local.get(['filter', 'presetId', 'redactEnabled'], (data) => {
     const presetId = (data && data.presetId && PRESETS[data.presetId]) ? data.presetId : DEFAULT_PRESET_ID;
     if (presetSelect) presetSelect.value = presetId;
     applyPreset(presetId);
@@ -128,10 +128,6 @@ function loadState() {
     // preset patterns (those apply from capture-config.js, no round-trip).
     if (data && typeof data.filter === 'string') filterInput.value = data.filter;
     if (data && typeof data.redactEnabled === 'boolean') redactToggle.checked = data.redactEnabled;
-    if (data && data.outputFormat) {
-      const radios = document.querySelectorAll('input[name="outputFormat"]');
-      radios.forEach((r) => { r.checked = (r.value === data.outputFormat); });
-    }
     updateRedactHint();
   });
 }
@@ -236,20 +232,13 @@ document.querySelectorAll('input[name="filterMode"]').forEach((r) => {
   });
 });
 
-document.querySelectorAll('input[name="outputFormat"]').forEach((r) => {
-  r.addEventListener('change', () => {
-    if (r.checked) chrome.storage.local.set({ outputFormat: r.value });
-  });
-});
-
 // Botón Record / Stop
 btnRecord.addEventListener('click', async () => {
   if (!isRecording) {
     const filter = filterInput.value.trim();
-    const presetId = presetSelect.value || 'linkedin-voyager';
+    const presetId = presetSelect.value || DEFAULT_PRESET_ID;
     const captureConfig = buildCaptureConfig(presetId);
-    const outputFormatRadio = document.querySelector('input[name="outputFormat"]:checked');
-    const outputFormat = outputFormatRadio ? outputFormatRadio.value : 'jsonl';
+    const outputFormat = 'jsonl';
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabId = (tab && tab.id) || null;
@@ -312,8 +301,7 @@ btnPause.addEventListener('click', () => {
 btnDownload.addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const site = (tab && tab.url) ? new URL(tab.url).hostname : 'unknown';
-  const outputFormatRadio = document.querySelector('input[name="outputFormat"]:checked');
-  const format = outputFormatRadio ? outputFormatRadio.value : 'jsonl';
+  const format = 'jsonl';
 
   chrome.runtime.sendMessage({ type: 'DOWNLOAD', site, format }, (res) => {
     if (!res) {
@@ -352,14 +340,11 @@ btnDownload.addEventListener('click', async () => {
       bytes = new TextEncoder().encode(res.data);
     }
 
-    var mime = format === 'json-array' ? 'application/json' : 'application/x-ndjson';
-    var blob = new Blob([bytes], { type: mime });
+    var blob = new Blob([bytes], { type: 'application/x-ndjson' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = res.filename || (format === 'json-array'
-      ? 'api-capture-' + site + '-' + Date.now() + '.json'
-      : 'are-capture-' + site + '-' + Date.now() + '.jsonl');
+    a.download = res.filename || ('are-capture-' + site + '-' + Date.now() + '.jsonl');
     a.click();
     URL.revokeObjectURL(url);
   });
@@ -374,18 +359,18 @@ btnClear.addEventListener('click', () => {
   });
 });
 
-// Botón Copiar cookies (Fase 3) — obtiene la auth del sitio (incluye httpOnly
-// como li_at / JSESSIONID, que fetch no puede leer) vía chrome.cookies, para
-// hacer replay del API. NO se guarda en la captura: es un canal aparte.
-const btnCopyCookies = document.getElementById('btnCopyCookies');
+// Botón Descargar cookies (Fase 3) — baja un .json con la auth del sitio
+// (incluye httpOnly como li_at / JSESSIONID, que fetch no puede leer) vía
+// chrome.cookies, para replay. NO se guarda en la captura: es un canal aparte.
+const btnDownloadCookies = document.getElementById('btnDownloadCookies');
 const cookiesHint = document.getElementById('cookiesHint');
 function setCookiesHint(msg, isError) {
   if (!cookiesHint) return;
   cookiesHint.textContent = msg;
   cookiesHint.style.color = isError ? '#f87171' : '';
 }
-if (btnCopyCookies) {
-  btnCopyCookies.addEventListener('click', async () => {
+if (btnDownloadCookies) {
+  btnDownloadCookies.addEventListener('click', async () => {
     let tab;
     try { [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); } catch (e) {}
     const url = tab && tab.url;
@@ -393,17 +378,30 @@ if (btnCopyCookies) {
       setCookiesHint('Abrí el sitio del que querés las cookies en la pestaña activa.', true);
       return;
     }
-    chrome.runtime.sendMessage({ type: 'GET_COOKIES', url }, async (res) => {
+    chrome.runtime.sendMessage({ type: 'GET_COOKIES', url }, (res) => {
       if (chrome.runtime.lastError || !res || res.ok === false) {
         setCookiesHint('Error: ' + ((res && res.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'desconocido'), true);
         return;
       }
-      try {
-        await navigator.clipboard.writeText(res.cookieHeader || '');
-        setCookiesHint('✓ ' + res.count + ' cookies copiadas (header Cookie listo para replay).');
-      } catch (e) {
-        setCookiesHint('Cookies leídas pero no se pudo copiar: ' + (e.message || e), true);
-      }
+      let host = 'site';
+      try { host = new URL(url).hostname; } catch (e) {}
+      const payload = {
+        capturedAt: new Date().toISOString(),
+        url: url,
+        host: host,
+        count: res.count || 0,
+        // Header listo para curl/Postman: -H "Cookie: <cookieHeader>"
+        cookieHeader: res.cookieHeader || '',
+        cookies: res.cookies || []
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const dlUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = 'cookies-' + host + '-' + Date.now() + '.json';
+      a.click();
+      URL.revokeObjectURL(dlUrl);
+      setCookiesHint('✓ ' + (res.count || 0) + ' cookies descargadas (.json con header Cookie para replay).');
     });
   });
 }

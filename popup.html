@@ -198,7 +198,7 @@
       padding: 9px 10px;
     }
 
-    #btnCopyCookies {
+    #btnDownloadCookies {
       background: #1e293b;
       color: #cbd5e1;
       width: 100%;
@@ -350,14 +350,6 @@
     </div>
   </div>
 
-  <div class="section">
-    <label>Formato de salida</label>
-    <div class="mode-row">
-      <label><input type="radio" name="outputFormat" value="jsonl" checked /> JSON-Lines (recomendado)</label>
-      <label><input type="radio" name="outputFormat" value="json-array" /> JSON array (legacy v1.2.x)</label>
-    </div>
-  </div>
-
   <div class="actions">
     <button id="btnRecord">▶ Iniciar</button>
     <button id="btnPause" style="display:none">⏸ Pausar</button>
@@ -366,8 +358,8 @@
   </div>
 
   <div class="section">
-    <button id="btnCopyCookies" type="button">📋 Copiar cookies del sitio</button>
-    <div class="hint" id="cookiesHint">Copia las cookies de auth (incluye httpOnly como li_at) para replay. No se guardan en la captura.</div>
+    <button id="btnDownloadCookies" type="button">⬇ Descargar cookies del sitio</button>
+    <div class="hint" id="cookiesHint">Descarga un .json con las cookies de auth (incluye httpOnly como li_at) + el header Cookie listo para replay. No se guardan en la captura.</div>
   </div>
 
   <div class="recording-indicator" id="recordingIndicator">
