@@ -23,8 +23,16 @@
 
 ### 🔌 WebSocket (+ SSE) capture
 
-Reverse engineer realtime / chat protocols — e.g. **automating the Skool or
-LinkedIn chat**, extending the kind of work the Apify Skool actor does.
+Reverse engineer realtime / chat protocols — e.g. understanding the **Skool or
+LinkedIn chat** so you can decide how to automate it. The extension is the
+*recon* here; it is decoupled from where any automation runs:
+
+- Capturing the chat usually reveals that **sending** a message is a plain HTTP
+  POST (the WS is often receive-only). If so, no WS runtime is needed — it
+  becomes a normal HTTP write action (e.g. in the Apify Skool actor).
+- Only **listening** in real time needs a persistent connection, which belongs
+  in an always-on service (a Coolify microservice / n8n long-running / the
+  Spark stack) — **not** in a run-based Apify actor.
 
 WebSocket is different from fetch/XHR: one long-lived connection with many frames
 both directions. The design keeps it ordered:
