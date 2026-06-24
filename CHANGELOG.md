@@ -84,6 +84,34 @@ The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   one-click workflow is unchanged: open popup → Start → use site → Stop
   → Download.
 
+## [1.3.2] — 2026-06-24 — Capture Mode stability
+
+### Fixed
+
+- **`Session storage quota bytes exceeded` on long LinkedIn Voyager
+  sessions.** `chrome.storage.session` has a 10MB quota total. The
+  service worker previously persisted the full `captured[]` array on
+  every CAPTURE message, which threw this error after ~10-50 large
+  LinkedIn profile/feed responses (each 500KB-1MB). Fix: persist ONLY
+  metadata (counters + isRecording + captureConfig). The actual
+  `captured[]` buffer stays in memory only. If the SW crashes mid-session
+  you lose the buffer, but in normal flow (Stop + Download) no data is
+  lost.
+- **Service worker OOM on multi-thousand-event sessions.** The captured
+  array was unbounded in memory. At MAX_EVENTS=10000 with 5MB-per-event
+  cap, worst case was 50GB. Added `MAX_TOTAL_BYTES = 50MB` cap with
+  FIFO eviction of the oldest events when exceeded. The user sees a
+  slightly truncated session but the SW stays alive.
+
+### Notes
+
+- Patch bump 1.3.1 → 1.3.2.
+- Side effect: after a SW restart (browser close, manual reload in
+  `chrome://extensions/`), the popup may briefly show '0 REQUESTS' even
+  though `isRecording=true` is persisted. The next CAPTURE event will
+  reset the counter. This is acceptable for a v1.3.2 hotfix; a clean
+  re-record on browser close is a separate F4 task.
+
 ## [1.3.1] — 2026-06-24 — Capture Mode bugfix
 
 ### Fixed
