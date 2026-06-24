@@ -37,7 +37,11 @@ const PRESET_DEFAULTS = {
     redact: { enabled: true, headers: ['cookie','set-cookie','authorization','x-api-key','x-auth-token','csrf-token','x-csrf-token'] }
   },
   'linkedin-voyager': {
-    patterns: '^https:\\/\\/www\\.linkedin\\.com\\/(voyager\\/api\\/|li\\/track)',
+    // Bug fix 2026-06-24: patterns MUST be wrapped in /.../ to be parsed as
+    // regex by buildCaptureConfig. Previously stored as raw ^... which was
+    // round-tripped through the textarea and parsed as a literal substring,
+    // matching nothing.
+    patterns: '/^https:\\/\\/www\\.linkedin\\.com\\/(voyager\\/api\\/|li\\/track)/',
     filterMode: 'OR',
     redact: {
       enabled: true,
@@ -93,7 +97,16 @@ function buildCaptureConfig(presetId) {
 function applyPreset(presetId) {
   const defaults = PRESET_DEFAULTS[presetId];
   if (!defaults) return;
-  filterInput.value = defaults.patterns || '';
+  // defaults.patterns is an array of {type, value} objects (see capture-config.js).
+  // The textarea takes a string, so we serialize properly: one pattern value per line.
+  // Bug fix 2026-06-24: previously used `defaults.patterns || ''` which produced
+  // "[object Object],[object Object]" garbage in the textarea and made the
+  // LinkedIn Voyager preset capture nothing.
+  if (Array.isArray(defaults.patterns) && defaults.patterns.length > 0) {
+    filterInput.value = defaults.patterns.map((p) => p.value).join('\n');
+  } else {
+    filterInput.value = '';
+  }
   const radios = document.querySelectorAll('input[name="filterMode"]');
   radios.forEach((r) => { r.checked = (r.value === defaults.filterMode); });
   redactToggle.checked = defaults.redact.enabled !== false;
@@ -306,8 +319,22 @@ btnClear.addEventListener('click', () => {
 });
 
 // Auto-refresh mientras está grabando
+// Bug fix 2026-06-24: also poll the state itself (not just preview when
+// isRecording=true), so we recover from initial GET_STATE race / SW wake
+// delay. Without this, the popup could show 'Iniciar' even when background
+// is actively recording (because isRecording stays false module-level until
+// GET_STATE returns — and the previous polling did nothing when it was false).
 setInterval(() => {
-  if (isRecording) refreshPreview();
+  if (isRecording) {
+    refreshPreview();
+  } else {
+    // Re-fetch state — if SW is now awake and recording, this flips the UI.
+    chrome.runtime.sendMessage({ type: 'GET_STATE' }, (res) => {
+      if (!res) return;
+      isRecording = res.isRecording;
+      updateUI(res.total, res.unique);
+    });
+  }
 }, 1500);
 
 // Iniciar

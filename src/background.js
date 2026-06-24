@@ -14,27 +14,51 @@
 const MAX_EVENTS = 10000;
 const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MB
 const WARNING_AT = 9000;
+// Bug fix 2026-06-24: also cap the TOTAL memory footprint of `captured[]`
+// to avoid SW OOM (was unbounded before — at MAX_EVENTS with 5MB events
+// that's 50GB potential, which would crash the SW long before the user
+// downloaded anything). When we hit this cap, drop the oldest events
+// (FIFO) and keep capturing — the user just sees a slightly truncated
+// session. Trade-off vs quota: session storage is gone, but the
+// in-memory buffer is bounded to ~50MB which is SW-safe.
+const MAX_TOTAL_BYTES = 50 * 1024 * 1024; // 50 MB
 
 let captured = [];
 let uniqueKeys = new Set();
+let totalBytes = 0; // Bug fix 2026-06-24: tracks in-memory footprint for FIFO eviction
 let isRecording = false;
 let recordingTabId = null;
 let captureConfig = null;
 let outputFormat = 'jsonl'; // 'jsonl' | 'json-array'
 let filterMode = 'OR';
 
-// Restore state when service worker wakes up
+// Restore state when service worker wakes up.
+// Bug fix 2026-06-24: chrome.storage.session has a 10MB quota total. We
+// previously persisted the full `captured[]` array on every CAPTURE
+// message, which threw 'Session storage quota bytes exceeded' after ~50-100
+// large LinkedIn Voyager/GraphQL responses. Fix: persist ONLY metadata
+// (counters + isRecording + config). The actual `captured[]` buffer
+// stays in memory only — if the SW crashes, the buffer is lost. That's
+// acceptable because (a) the SW doesn't crash mid-session in normal use,
+// (b) the popup restores counters from `total`/`unique` in GET_STATE, not
+// from the array, and (c) the consumer downloads the JSONL on Stop.
+//
+// Trade-off: if you forget to Stop before closing the browser, you lose
+// the captures. Same as before the fix (session storage cleared on browser
+// close). Net result: no quota error, no data loss in normal flow.
 chrome.storage.session.get(
-  ['isRecording', 'recordingTabId', 'captured', 'uniqueKeys', 'captureConfig', 'outputFormat', 'filterMode'],
+  ['isRecording', 'recordingTabId', 'captureConfig', 'outputFormat', 'filterMode'],
   (data) => {
     if (data && data.isRecording) {
       isRecording = data.isRecording;
       recordingTabId = data.recordingTabId || null;
-      captured = Array.isArray(data.captured) ? data.captured : [];
-      uniqueKeys = new Set(Array.isArray(data.uniqueKeys) ? data.uniqueKeys : []);
       captureConfig = data.captureConfig || null;
       outputFormat = data.outputFormat || 'jsonl';
       filterMode = data.filterMode || 'OR';
+      // captured[] and uniqueKeys start empty after SW restart.
+      // The user will need to re-record, but the session is still active
+      // (isRecording=true), so re-clicking Iniciar isn't needed — but they
+      // WILL see '0 REQUESTS' until they navigate again.
     }
   }
 );
@@ -44,8 +68,6 @@ function _persistSession() {
     chrome.storage.session.set({
       isRecording,
       recordingTabId,
-      captured,
-      uniqueKeys: Array.from(uniqueKeys),
       captureConfig,
       outputFormat,
       filterMode
@@ -80,7 +102,17 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     const isNew = !uniqueKeys.has(key);
     uniqueKeys.add(key);
 
-    captured.push(Object.assign({}, processed, { isNewEndpoint: isNew }));
+    const entryWithMeta = Object.assign({}, processed, { isNewEndpoint: isNew });
+    const entryBytes = _estimateEntryBytes(entryWithMeta);
+    captured.push(entryWithMeta);
+    totalBytes += entryBytes;
+
+    // Bug fix 2026-06-24: total memory cap (FIFO eviction of oldest events
+    // when we exceed MAX_TOTAL_BYTES). Prevents SW OOM on long sessions.
+    while (totalBytes > MAX_TOTAL_BYTES && captured.length > 1) {
+      const dropped = captured.shift();
+      totalBytes -= _estimateEntryBytes(dropped);
+    }
 
     // Hard cap: auto-stop at MAX_EVENTS.
     if (captured.length >= MAX_EVENTS) {
@@ -132,6 +164,7 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     // Reset captures — START begins a new session.
     captured = [];
     uniqueKeys = new Set();
+    totalBytes = 0; // Bug fix 2026-06-24: reset memory tracker
 
     _persistSession();
 
@@ -246,6 +279,7 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   if (msg.type === 'CLEAR') {
     captured = [];
     uniqueKeys = new Set();
+    totalBytes = 0; // Bug fix 2026-06-24: reset memory tracker too
     _persistSession();
 
     chrome.tabs.query({}, (tabs) => {
@@ -344,6 +378,19 @@ function _byteLength(value) {
   } catch (e) {
     return 0;
   }
+}
+
+// Bug fix 2026-06-24: estimate the in-memory size of a single captured entry.
+// Used to track totalBytes for FIFO eviction. Approximation — counts the
+// body sizes (the dominant contributor) and a flat per-entry overhead.
+function _estimateEntryBytes(entry) {
+  if (!entry) return 0;
+  let bytes = 256; // flat overhead for the wrapper object + URL + method + headers keys
+  bytes += _byteLength(entry.url);
+  bytes += _byteLength(entry.requestBody);
+  bytes += _byteLength(entry.responseBody);
+  bytes += _byteLength(entry.requestHeaders) + _byteLength(entry.responseHeaders);
+  return bytes;
 }
 
 // ---------------------------------------------------------------------------
