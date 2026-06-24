@@ -49,6 +49,15 @@
     window.OpfsBuffer = api;
   } else if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
+  } else if (typeof self !== 'undefined') {
+    // B1 fix: in a service worker there is no `window` and no `module`. The
+    // previous UMD had no worker branch, so importScripts'ing this file left
+    // OpfsBuffer attached to NOTHING and background.js saw `self.OpfsBuffer`
+    // as undefined. Attach to the worker global. (memory-buffer.js already
+    // had a globalThis fallback; this brings opfs-buffer.js in line.)
+    self.OpfsBuffer = api;
+  } else if (typeof globalThis !== 'undefined') {
+    globalThis.OpfsBuffer = api;
   }
 }(typeof self !== 'undefined' ? self : this, function () {
   'use strict';

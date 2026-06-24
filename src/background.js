@@ -63,6 +63,25 @@
  *     only exercised in the SW context.
  */
 
+// ---------------------------------------------------------------------------
+// B1 fix (2026-06-24): the MV3 service worker is a CLASSIC script — the
+// manifest declares `service_worker` WITHOUT `type:module`, and Chrome loads
+// ONLY this file. The buffer dependencies are NOT auto-injected, so we must
+// pull them in via importScripts BEFORE the IIFE below reads self.OpfsBuffer /
+// self.MemoryBuffer. Without this, both are null and the SW captures NOTHING
+// in real Chrome (the 71-green-but-broken suite never caught it because the
+// mock pre-attached the buffers to globalThis — see test/sw-wiring.test.mjs).
+//
+//   - Production SW:        importScripts is defined → loads the deps.
+//   - Honest unit loader:   test/_sw-loader.mjs provides importScripts.
+//   - Legacy CJS harness:   importScripts is undefined (require() context) →
+//                           this is a no-op and the harness attaches the
+//                           buffers to globalThis itself (loadBackgroundFresh).
+// ---------------------------------------------------------------------------
+if (typeof importScripts === 'function') {
+  importScripts('/src/memory-buffer.js', '/src/opfs-buffer.js');
+}
+
 (function (root, factory) {
   'use strict';
   var api = factory();
