@@ -4,6 +4,108 @@ All notable changes to API Reverse Engineer are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] — 2026-06-24 — Runtime bug fixes (counter, badge, download) + QA harness
+
+### Fixed
+
+- **Counter stale after START (bug #1).** In v1.4.1, the `REQUESTS`
+  counter stayed at 0 (or the initial value) after clicking Iniciar,
+  while `ÚNICOS` (the dedup set) correctly incremented. Cause: the
+  START handler set `activeBuffer` asynchronously via
+  `opfsBuffer.init().then(...)`. Any `CAPTURE` that arrived during the
+  init window (before the `.then()` callback ran) was silently dropped
+  by the `if (activeBuffer)` guard in the CAPTURE handler, so
+  `inMemoryCount` was never updated. Fix: in the START handler, set
+  `activeBuffer = memoryBuffer` SYNCHRONOUSLY. CAPTUREs during the init
+  window now go to the memory buffer (counted + retrievable). When the
+  async OPFS init resolves, the `.then()` callback migrates the
+  memory snapshot to the OPFS file in order (no duplicates) and
+  switches `activeBuffer` to `opfsBuffer`. The counter is now correct
+  from the first CAPTURE, and the OPFS file still has the full set
+  of events at download time.
+- **Badge shows red dot while recording (bug #2 UX).** In v1.4.1, the
+  icon badge alternated between the red `●` (on START) and the counter
+  number (on every CAPTURE). The user saw a flickery badge and never
+  knew if the SW was actively recording. Fix: the badge is now driven
+  purely by the `isRecording` flag, not by the counter. The
+  `_setBadge(tabId)` helper shows `●` red while `isRecording === true`
+  and clears the badge when stopped. The counter goes in the popup
+  only. START, STOP, AUTO_STOP, and SW restore all call
+  `_setBadge(tabId)` atomically, so the badge always reflects the
+  current state.
+- **Download does nothing after STOP (bug #3).** In v1.4.1, the
+  DOWNLOAD handler either built a JSONL with stale/empty data
+  (because `inMemoryCount` was 0 from the counter bug) or — when
+  OPFS was active — produced a base64-encoded text file that the
+  popup wrote verbatim to disk (a pre-existing popup-side decode
+  bug). The user clicked Descargar and got a useless file. Fixes:
+  (1) DOWNLOAD now validates `inMemoryCount > 0` up front and
+  returns `{ok: false, error: "No captures to download. Did you
+  navigate a page after clicking Iniciar?"}` if there is nothing
+  to download. (2) The OPFS path is unchanged but its response
+  shape (`{data: <base64>, encoding: "base64", lineCount, ...}`)
+  is now matched by the in-memory fallback path. The memory
+  fallback also returns base64, so the popup can decode uniformly
+  with a single code path. (3) If both OPFS and memory paths
+  fail, DOWNLOAD returns `{ok: false, error: "Download failed:
+  ..."}` instead of silently producing an empty file. The
+  accompanying popup-side decode fix is a follow-up.
+- **SW restart left the badge blank (bug #4).** In v1.4.1, after
+  the service worker restarted mid-session, `isRecording` was
+  restored from `chrome.storage.session` but the badge was not
+  re-set, so the user saw no indicator that the SW was still in
+  a recording state. Fix: the SW restore callback now calls
+  `_setBadge(recordingTabId)` if `isRecording === true`. Combined
+  with a defensive null-buffer fallback in the CAPTURE handler
+  (if `activeBuffer` is null but `isRecording` is true, fall back
+  to the memory buffer), the post-SW-restart state is now
+  consistent and visible.
+
+### Added
+
+- **Automated QA harness for the service worker.** New
+  `test/_chrome-mock.js` shared mock helper + `test/background.test.mjs`
+  with **12 unit tests** that load `src/background.js` into Node
+  with a mocked `chrome.*` surface (tabs, runtime, action, storage,
+  scripting, downloads) and an in-memory OPFS mock. The harness
+  covers all 3 production bugs Cristian reported plus the
+  surrounding edge cases (OPFS upgrade migration, OPFS init
+  failure, SW restart badge, GET_STATE totals, 0-capture download
+  short-circuit, base64 JSONL output). Run: `node test/background.test.mjs`.
+- **Total test count is now 71/71 across 4 suites:**
+  `capture-config` 34/34, `memory-buffer` 8/8, `opfs-buffer` 17/17,
+  `background` 12/12.
+
+### Notes
+
+- Patch bump 1.4.1 → 1.4.2 (bugfixes only, no new permissions, no
+  breaking changes to the JSONL output shape).
+- The JSONL output is compatible with v1.4.0/v1.4.1 — the importer
+  in `linkedin-all-in-one-api` needs no changes.
+- The OPFS streaming buffer is still the primary path. The memory
+  buffer is the synchronous fallback that the START handler now
+  uses during the OPFS init window. Once OPFS init resolves, the
+  memory snapshot is migrated to the OPFS file (no duplicates in
+  the output) and the active buffer switches to OPFS. The 50 MB
+  FIFO cap and the v1.3.2 in-memory fallback are still available
+  for environments where OPFS is unavailable (Chrome < 102 or
+  strict permissioning).
+- **Follow-up (out of scope for v1.4.2):** the popup's DOWNLOAD
+  handler should be updated to decode the base64 response and
+  pass an `ArrayBuffer` (or `Blob`) to `URL.createObjectURL`, not
+  the base64 string. With v1.4.2's uniform base64 response, the
+  popup can use a single decode path. This will be a v1.4.3
+  patch.
+
+### Privacy guarantees
+
+- All redaction defaults (cookies, csrf, body fields) are unchanged.
+- The OPFS file is local-only. The plugin still has zero telemetry,
+  zero remote-config, zero network calls.
+- The new test harness lives in `test/`. No production code in
+  `src/` was changed to expose internals for testing. The mock
+  surfaces are entirely in `test/_chrome-mock.js`.
+
 ## [1.4.0] — 2026-06-24 — OPFS streaming buffer (ADR-0002)
 
 ### Changed
