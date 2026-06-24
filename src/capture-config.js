@@ -76,18 +76,35 @@
     }),
     'linkedin-voyager': Object.freeze({
       id: 'linkedin-voyager',
-      label: '[LinkedIn Voyager]',
+      label: '[LinkedIn]',
       sortOrder: 1,
+      // Endpoints reales del LinkedIn web 2026: además del Voyager clásico
+      // (/voyager/api/), el flagship-web moderno usa RSC actions
+      // (/rsc-action/) y GraphQL. Patterns por substring para que funcionen
+      // con URLs relativas resueltas a absolutas (ver injected.js).
       patterns: Object.freeze([
-        Object.freeze({ type: 'regex', value: '^https:\\/\\/www\\.linkedin\\.com\\/(voyager\\/api\\/|li\\/track)' })
+        Object.freeze({ type: 'literal', value: '/voyager/api/' }),
+        Object.freeze({ type: 'literal', value: '/rsc-action/' }),
+        Object.freeze({ type: 'literal', value: '/api/graphql' })
+      ]),
+      // Excluir el ruido de telemetría/estáticos que no es API de datos.
+      exclude: Object.freeze([
+        Object.freeze({ type: 'literal', value: 'trackO11y' }),
+        Object.freeze({ type: 'literal', value: 'sensorCollect' }),
+        Object.freeze({ type: 'literal', value: 'trackingApiService' }),
+        Object.freeze({ type: 'literal', value: 'trackMedia' }),
+        Object.freeze({ type: 'literal', value: '/li/track' }),
+        Object.freeze({ type: 'literal', value: '/sct' }),
+        Object.freeze({ type: 'literal', value: 'static.licdn.com' })
       ]),
       filterMode: 'OR',
       redact: Object.freeze({
         enabled: true,
         headers: Object.freeze([
           'cookie', 'set-cookie', 'csrf-token', 'x-li-pem-metadata',
-          'x-li-pem', 'x-li-track', 'x-li-decorators',
-          'x-restli-protocol-version', 'authorization'
+          'x-li-pem', 'x-li-track', 'x-li-decorators', 'authorization'
+          // B10: x-restli-protocol-version NO se redacta — es la constante
+          // '2.0.0', no un secreto, y se necesita para replay.
         ]),
         body: Object.freeze([
           'password', 'client_secret', 'access_token', 'refresh_token',
@@ -139,7 +156,9 @@
   });
 
   // Default preset used when popup hasn't chosen one (or for legacy v1.2.3 path).
-  var DEFAULT_PRESET_ID = 'linkedin-voyager';
+  // Generic = capturar todo, redacción de secretos comunes ON. El usuario elige
+  // un preset específico (LinkedIn, GraphQL…) cuando quiere narrowear.
+  var DEFAULT_PRESET_ID = 'generic';
 
   // -------------------------------------------------------------------------
   // parseFilter
@@ -270,15 +289,24 @@
    * @param {'AND'|'OR'} [mode] — default 'OR' for backward-compat with v1.2.3
    * @returns {boolean}
    */
-  function shouldCapture(url, patterns, mode) {
-    if (!Array.isArray(patterns) || patterns.length === 0) return true;
-    if (typeof url !== 'string' || url.length === 0) return false;
+  function shouldCapture(url, patterns, mode, exclude) {
+    var hasInclude = Array.isArray(patterns) && patterns.length > 0;
+    var hasExclude = Array.isArray(exclude) && exclude.length > 0;
 
-    var m = mode === 'AND' ? 'AND' : 'OR';
-    if (m === 'AND') {
-      return patterns.every(function (p) { return _matchOne(url, p); });
+    if (typeof url !== 'string' || url.length === 0) {
+      // Empty url: capture only if there's no include filter (capture-all).
+      return !hasInclude;
     }
-    return patterns.some(function (p) { return _matchOne(url, p); });
+    // Exclude wins over include — filters telemetry/static noise even when the
+    // include patterns would otherwise match.
+    if (hasExclude && exclude.some(function (p) { return _matchOne(url, p); })) {
+      return false;
+    }
+    if (!hasInclude) return true;
+    var m = mode === 'AND' ? 'AND' : 'OR';
+    return m === 'AND'
+      ? patterns.every(function (p) { return _matchOne(url, p); })
+      : patterns.some(function (p) { return _matchOne(url, p); });
   }
 
   // -------------------------------------------------------------------------

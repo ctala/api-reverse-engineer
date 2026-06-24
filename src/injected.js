@@ -54,6 +54,18 @@
     }
   });
 
+  // Resolve a (possibly relative) URL to absolute, using the page location as
+  // base. SPAs like LinkedIn fetch with relative URLs (/voyager/api/…); the
+  // filter patterns are absolute-friendly substrings, and an absolute URL is
+  // also more useful for reverse engineering.
+  function _absoluteUrl(u) {
+    try {
+      return new URL(String(u), (typeof location !== 'undefined' ? location.href : undefined)).href;
+    } catch (e) {
+      return u;
+    }
+  }
+
   // applyCapture — runs INSIDE the interceptors, BEFORE dispatching the event.
   // Returns the (possibly redacted) entry, or null if it should be skipped.
   function applyCapture(entry) {
@@ -63,8 +75,9 @@
       return entry;
     }
 
-    // 1. URL filter (early skip — redaction is skipped entirely if filtered out)
-    if (!shouldCapture(entry.url, cfg.patterns || [], cfg.filterMode || 'OR')) {
+    // 1. URL filter (early skip — redaction is skipped entirely if filtered out).
+    // exclude wins over include (filters telemetry/static noise).
+    if (!shouldCapture(entry.url, cfg.patterns || [], cfg.filterMode || 'OR', cfg.exclude || [])) {
       return null;
     }
 
@@ -111,8 +124,12 @@
     var args = Array.prototype.slice.call(arguments);
     var resource = args[0];
     var options = args[1] || {};
-    var url = typeof resource === 'string' ? resource : (resource && resource.url) || '';
-    var method = options.method || 'GET';
+    var isRequest = (typeof Request !== 'undefined') && (resource instanceof Request);
+    var url = _absoluteUrl(isRequest ? resource.url : (typeof resource === 'string' ? resource : (resource && resource.url) || ''));
+    // B8: con fetch(new Request(url, {method, headers, body})) el method/headers
+    // viven en el Request, no en args[1]. Tomamos el method del Request si no
+    // viene en options.
+    var method = options.method || (isRequest ? resource.method : 'GET');
     var startTime = Date.now();
 
     var requestBody = null;
@@ -128,8 +145,14 @@
 
     var requestHeaders = {};
     try {
-      var h = new Headers(options.headers);
-      h.forEach(function (v, k) { requestHeaders[k] = v; });
+      // B8: headers del Request (si se usó fetch(Request)) + headers de options.
+      if (isRequest && resource.headers && typeof resource.headers.forEach === 'function') {
+        resource.headers.forEach(function (v, k) { requestHeaders[k] = v; });
+      }
+      if (options.headers) {
+        var h = new Headers(options.headers);
+        h.forEach(function (v, k) { requestHeaders[k] = v; });
+      }
     } catch (e) {}
 
     try {
@@ -186,14 +209,23 @@
     var method = 'GET';
     var url = '';
     var requestBody = null;
+    var requestHeaders = {};
     var startTime = { value: null };
 
     var originalOpen = xhr.open.bind(xhr);
     xhr.open = function (m, u) {
       method = m;
-      url = u;
+      url = _absoluteUrl(u);
       var rest = Array.prototype.slice.call(arguments, 2);
       return originalOpen.apply(null, [m, u].concat(rest));
+    };
+
+    // B7: capturar los request headers que el sitio setea vía setRequestHeader
+    // (Voyager messaging usa XHR con csrf-token / x-li-*).
+    var originalSetRequestHeader = xhr.setRequestHeader.bind(xhr);
+    xhr.setRequestHeader = function (k, v) {
+      try { requestHeaders[k] = v; } catch (e) {}
+      return originalSetRequestHeader(k, v);
     };
 
     var originalSend = xhr.send.bind(xhr);
@@ -213,20 +245,28 @@
           responseBody = xhr.responseText;
         }
 
-        var entry = {
+        // B7: parsear los response headers crudos de getAllResponseHeaders().
+        var responseHeaders = {};
+        try {
+          var raw = xhr.getAllResponseHeaders() || '';
+          raw.trim().split(/[\r\n]+/).forEach(function (line) {
+            var idx = line.indexOf(':');
+            if (idx > 0) responseHeaders[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+          });
+        } catch (e) {}
+
+        dispatch({
           type: 'xhr',
           method: method,
           url: url,
+          requestHeaders: requestHeaders,
           requestBody: requestBody,
           status: xhr.status,
+          responseHeaders: responseHeaders,
           responseBody: responseBody,
           duration: Date.now() - (startTime.value || Date.now()),
           timestamp: new Date().toISOString()
-        };
-
-        // XHR rarely carries headers we set ourselves; response headers are
-        // not exposed via the XHR object in the same way. Attach what we have.
-        dispatch(entry);
+        });
       });
 
       return originalSend(body);

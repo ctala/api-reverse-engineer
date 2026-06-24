@@ -4,6 +4,41 @@ All notable changes to API Reverse Engineer are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-06-24 — Preset LinkedIn real + filtro arreglado + Copy Cookies + contador en vivo
+
+### Fixed
+
+- **El filtro de preset no narrowaba (capturaba TODO).** En el popup, las
+  patterns del preset se guardaban como string pero `applyPreset` las trataba
+  como array → vaciaba el filtro. Resuelto consolidando a **fuente única**:
+  el popup carga `capture-config.js` y usa sus PRESETS + parser canónicos en
+  vez de una copia desincronizada (mata B19). Las patterns del preset ya NO se
+  round-trippean por el textarea (que era el origen del bug); el textarea queda
+  para filtros extra opcionales del usuario.
+- **B10 — `x-restli-protocol-version` se redactaba** (es la constante `2.0.0`,
+  necesaria para replay). Removido de la lista de redacción del preset LinkedIn.
+- **B7 — XHR no capturaba headers.** Ahora parchea `setRequestHeader` y parsea
+  `getAllResponseHeaders()`.
+- **B8 — `fetch(new Request(...))` perdía method/headers.** Se leen del Request.
+- **URLs relativas.** Las SPAs (LinkedIn) hacen fetch con URLs relativas; se
+  resuelven a absolutas antes de filtrar/guardar.
+- **Contador del icono restaurado.** El badge muestra el conteo de requests en
+  vivo (rojo grabando / ámbar pausado), sin el parpadeo que tenía v1.4.1.
+
+### Added
+
+- **Copy Cookies.** Botón en el popup que copia las cookies de auth del sitio
+  (incluye httpOnly como `li_at` / `JSESSIONID`, que `fetch`/`document.cookie`
+  no pueden leer) vía `chrome.cookies`, para hacer replay del API. NO se guardan
+  en la captura — canal aparte. Nueva permission `cookies`.
+- **Filtro con exclusión.** `shouldCapture` acepta patterns de `exclude` (el
+  exclude gana sobre el include) para filtrar telemetría/estáticos.
+- **Preset LinkedIn actualizado a endpoints reales 2026:** `/voyager/api/`,
+  `/rsc-action/` (flagship-web RSC), `/api/graphql`; excluye `trackO11y`,
+  `sensorCollect`, `/li/track`, `static.licdn.com`, etc. Default ahora = Generic.
+- E2E nuevos (Chromium real): filtro narrowea/excluye, popup arma config desde
+  la fuente única + B10, y Copy Cookies lee httpOnly. Unit 78 + e2e 5 verde.
+
 ## [1.5.0] — 2026-06-24 — La extensión vuelve a capturar + OPFS async + pausa/continuar
 
 ### Fixed (regresiones que rompían la captura)

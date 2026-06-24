@@ -274,26 +274,35 @@ if (typeof importScripts === 'function') {
    * Signature: `_setBadge(tabId)`. The `count` parameter from v1.4.1
    * has been removed (it was the source of the alternating bug).
    */
+  // Badge text fits ~4 chars; counts cap at MAX_EVENTS (auto-stop), so show the
+  // exact number up to 9999 and "10k" at the cap.
+  function _fmtBadgeCount(n) {
+    n = n || 0;
+    return n >= 10000 ? '10k' : String(n);
+  }
+
   function _setBadge(tabId) {
     if (typeof chrome === 'undefined' || !chrome.action) return;
     if (!tabId) return;
+    // Restored behaviour: the toolbar icon shows the LIVE request count while
+    // recording (red) or paused (amber). The v1.4.1 bug was *alternating*
+    // between a dot and the number on every CAPTURE — here the badge always
+    // shows the count, so there's nothing to alternate with.
     if (isRecording) {
-      // While recording, show red dot. Counter goes in popup only.
       try {
-        chrome.action.setBadgeText({ text: '●', tabId: tabId });
+        chrome.action.setBadgeText({ text: _fmtBadgeCount(inMemoryCount), tabId: tabId });
         chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: tabId });
       } catch (e) {}
       return;
     }
     if (paused) {
-      // Paused: amber "II" so the user sees the session is held, not stopped.
       try {
-        chrome.action.setBadgeText({ text: 'II', tabId: tabId });
+        chrome.action.setBadgeText({ text: _fmtBadgeCount(inMemoryCount), tabId: tabId });
         chrome.action.setBadgeBackgroundColor({ color: '#f59e0b', tabId: tabId });
       } catch (e) {}
       return;
     }
-    // When stopped, clear badge.
+    // Stopped/idle → clear.
     try { chrome.action.setBadgeText({ text: '', tabId: tabId }); } catch (e) {}
   }
 
@@ -368,8 +377,9 @@ if (typeof importScripts === 'function') {
         }
 
         _persistSession();
-        // v1.4.2: badge is driven by isRecording flag (no count). No call
-        // to _setBadge here — START/STOP/AUTO_STOP own the badge.
+        // Live badge: show the running request count on the toolbar icon
+        // (restored — the user watches this while capturing).
+        _setBadge(recordingTabId);
 
         respond({ ok: true });
         return true;
@@ -769,12 +779,47 @@ if (typeof importScripts === 'function') {
         respond({
           presets: [
             { id: 'generic', label: '[Generic]', sortOrder: 99 },
-            { id: 'linkedin-voyager', label: '[LinkedIn Voyager]', sortOrder: 1 },
+            { id: 'linkedin-voyager', label: '[LinkedIn]', sortOrder: 1 },
             { id: 'graphql', label: '[GraphQL]', sortOrder: 2 },
             { id: 'json-api', label: '[JSON API]', sortOrder: 3 }
           ],
-          defaultPresetId: 'linkedin-voyager'
+          defaultPresetId: 'generic'
         });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // GET_COOKIES (Fase 3) — copia las cookies del sitio para replay. Usa la
+      // API chrome.cookies, que SÍ lee cookies httpOnly (li_at, JSESSIONID) que
+      // document.cookie y fetch no pueden ver. NO se guardan en la captura: es
+      // un canal aparte para que el usuario obtenga la auth.
+      // -----------------------------------------------------------------------
+      if (msg.type === 'GET_COOKIES') {
+        var cookieUrl = msg.url;
+        if (!cookieUrl || typeof chrome === 'undefined' || !chrome.cookies) {
+          respond({ ok: false, error: 'Sin URL o sin permiso cookies' });
+          return true;
+        }
+        try {
+          chrome.cookies.getAll({ url: cookieUrl }, function (cookies) {
+            if (chrome.runtime.lastError) {
+              respond({ ok: false, error: chrome.runtime.lastError.message });
+              return;
+            }
+            var list = cookies || [];
+            var header = list.map(function (c) { return c.name + '=' + c.value; }).join('; ');
+            respond({
+              ok: true,
+              count: list.length,
+              cookieHeader: header,
+              cookies: list.map(function (c) {
+                return { name: c.name, value: c.value, domain: c.domain, path: c.path, secure: c.secure, httpOnly: c.httpOnly, expirationDate: c.expirationDate };
+              })
+            });
+          });
+        } catch (e) {
+          respond({ ok: false, error: String(e && e.message || e) });
+        }
         return true;
       }
     });

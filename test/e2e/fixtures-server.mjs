@@ -41,6 +41,16 @@ const PAGE_HTML = `<!doctype html>
     // 3) plain fetch GET.
     await fetch('/voyager/api/me').catch(() => {});
   };
+
+  // Mixed data + telemetry/static noise (todas RELATIVAS, como la SPA real) —
+  // para testear que el preset LinkedIn narrowea a datos y EXCLUYE el ruido.
+  window.fireMixed = async function () {
+    await fetch('/voyager/api/me').catch(() => {});                            // data (include)
+    await fetch('/flagship-web/rsc-action/actions/component').catch(() => {}); // data (rsc-action)
+    await fetch('/rest/trackO11yApi/trackO11y').catch(() => {});               // noise (sin include)
+    await fetch('/li/track?trk=x').catch(() => {});                            // noise (exclude)
+    await fetch('/static/asset.js').catch(() => {});                          // noise (sin include)
+  };
   document.getElementById('fire').addEventListener('click', () => window.fireRequests());
 </script>
 </body></html>`;
@@ -55,7 +65,11 @@ export function createFixturesServer() {
     const url = (req.url || '').split('?')[0];
 
     if (url === '/' || url === '/index.html') {
-      return send(res, 200, { 'content-type': 'text/html; charset=utf-8' }, PAGE_HTML);
+      return send(res, 200, {
+        'content-type': 'text/html; charset=utf-8',
+        // normal + httpOnly cookie (como li_at) para testear Copy Cookies.
+        'set-cookie': ['sessionPref=light; Path=/', 'li_at=AUTH_TOKEN_SECRET; Path=/; HttpOnly']
+      }, PAGE_HTML);
     }
 
     if (url === '/voyager/api/me') {
@@ -67,6 +81,14 @@ export function createFixturesServer() {
 
     if (url === '/voyager/api/messaging') {
       return send(res, 200, { 'content-type': 'application/json' }, JSON.stringify({ ok: true }));
+    }
+
+    // Data + noise endpoints para el test de filtro (todos 200).
+    if (url === '/flagship-web/rsc-action/actions/component') {
+      return send(res, 200, { 'content-type': 'application/json' }, JSON.stringify({ rsc: true }));
+    }
+    if (url === '/rest/trackO11yApi/trackO11y' || url === '/li/track' || url === '/static/asset.js') {
+      return send(res, 200, { 'content-type': 'application/json' }, JSON.stringify({ noise: true }));
     }
 
     return send(res, 404, { 'content-type': 'text/plain' }, 'not found');

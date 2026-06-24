@@ -118,35 +118,31 @@ test('background: counter survives the OPFS init race (bug #1)', async () => {
   assert.equal(state.isRecording, true);
 });
 
-test('background: badge shows red dot while recording (bug #2 UX)', async () => {
+test('background: badge shows the live request count while recording', async () => {
   const ctx = loadBackgroundFresh();
   await sendMessage(ctx, { type: 'START', tabId: 1 }, SENDER_TAB_1);
 
-  // Drain any pending badge calls (the SW restore at module load +
-  // START's _setBadge).
+  // Drain pending badge calls (SW restore at load + START's _setBadge +
+  // the async OPFS migration which re-sets the badge).
   await flushAsync();
-  const before = ctx.calls.setBadge.length;
-  assert.ok(before > 0, 'START should have called setBadgeText at least once');
+  await flushAsync();
 
-  // The LAST setBadgeText call should show the red dot, NOT a count.
-  const lastBadge = ctx.calls.setBadge[ctx.calls.setBadge.length - 1];
-  assert.equal(lastBadge.text, '●', 'badge must be red dot while recording');
-  assert.equal(lastBadge.tabId, 1, 'badge must target the recording tab');
+  // Right after START the badge shows the count (0), targeting the rec tab.
+  let lastBadge = ctx.calls.setBadge[ctx.calls.setBadge.length - 1];
+  assert.equal(lastBadge.text, '0', 'badge shows the count (0) right after START');
+  assert.equal(lastBadge.tabId, 1, 'badge targets the recording tab');
 
-  // Send a CAPTURE — the v1.4.1 bug was that the badge alternated
-  // between `●` and the count on every CAPTURE. In v1.4.2, the badge
-  // should NOT change on CAPTURE (it's driven by isRecording, not
-  // count).
+  // A CAPTURE updates the badge to the live count. The v1.4.1 bug was the
+  // badge *alternating* between a dot and the number; here it always shows
+  // the count, so there is nothing to alternate with.
   await sendMessage(ctx, {
     type: 'CAPTURE',
     entry: makeEntry('https://www.linkedin.com/voyager/api/me', 'GET')
   }, SENDER_TAB_1);
   await flushAsync();
 
-  // No new setBadgeText call should have been made for the CAPTURE.
-  // (setBadgeBackgroundColor may have been called, but not setBadgeText.)
-  const after = ctx.calls.setBadge.length;
-  assert.equal(after, before, 'CAPTURE must not call setBadgeText (badge is stable)');
+  lastBadge = ctx.calls.setBadge[ctx.calls.setBadge.length - 1];
+  assert.equal(lastBadge.text, '1', 'badge updates to the live count on CAPTURE');
 });
 
 test('background: download works after stop, JSONL has all 10 events (bug #3)', async () => {
@@ -319,9 +315,9 @@ test('background: badge clears on stop', async () => {
   await sendMessage(ctx, { type: 'START', tabId: 1 }, SENDER_TAB_1);
   await flushAsync();
 
-  // The badge should be `●` red.
+  // The badge shows the count (0) while recording.
   let last = ctx.calls.setBadge[ctx.calls.setBadge.length - 1];
-  assert.equal(last.text, '●', 'badge is red dot after START');
+  assert.equal(last.text, '0', 'badge shows the count while recording');
 
   await sendMessage(ctx, { type: 'STOP' }, SENDER_TAB_1);
   await flushAsync();
@@ -372,7 +368,7 @@ test('background: download with 0 captures returns ok:false with helpful error',
   assert.equal(resp.lineCount, 0);
 });
 
-test('background: SW restore sets badge to red dot if isRecording was true', async () => {
+test('background: SW restore sets the count badge if isRecording was true', async () => {
   // The SW restore block reads from chrome.storage.session at module
   // load. We pre-seed the storage with isRecording: true + recordingTabId.
   const ctx = loadBackgroundFresh({
@@ -390,11 +386,12 @@ test('background: SW restore sets badge to red dot if isRecording was true', asy
   // Let the SW restore callback (scheduled via setImmediate) run.
   await flushAsync();
 
-  // The restore handler should have called setBadgeText({text: '●', tabId: 7}).
-  const dotCall = ctx.calls.setBadge.find(
-    (c) => c.text === '●' && c.tabId === 7
+  // The restore handler should have set the count badge on tab 7 (count 0
+  // with no file to restore).
+  const badgeCall = ctx.calls.setBadge.find(
+    (c) => c.text === '0' && c.tabId === 7
   );
-  assert.ok(dotCall, 'SW restore must set red-dot badge on tab 7');
+  assert.ok(badgeCall, 'SW restore must set the count badge on tab 7');
 
   // GET_STATE should also report isRecording: true.
   const state = await sendMessage(ctx, { type: 'GET_STATE' }, SENDER_TAB_1);

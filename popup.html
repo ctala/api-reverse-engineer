@@ -198,6 +198,12 @@
       padding: 9px 10px;
     }
 
+    #btnCopyCookies {
+      background: #1e293b;
+      color: #cbd5e1;
+      width: 100%;
+    }
+
     .preview {
       padding: 0 16px 10px;
       max-height: 180px;
@@ -319,12 +325,12 @@
   </div>
 
   <div class="section">
-    <label for="filterInput">URL filter (multi-línea)</label>
+    <label for="filterInput">URL filter adicional (opcional)</label>
     <textarea
       id="filterInput"
       class="textarea"
       rows="3"
-      placeholder="Una por línea. /regex/i, *glob*, o substring literal."
+      placeholder="El preset ya filtra. Acá agregás filtros extra: una por línea (/regex/i, *glob*, o substring)."
     ></textarea>
     <div class="mode-row">
       <label><input type="radio" name="filterMode" value="AND" /> AND</label>
@@ -359,6 +365,11 @@
     <button id="btnClear" title="Limpiar">🗑</button>
   </div>
 
+  <div class="section">
+    <button id="btnCopyCookies" type="button">📋 Copiar cookies del sitio</button>
+    <div class="hint" id="cookiesHint">Copia las cookies de auth (incluye httpOnly como li_at) para replay. No se guardan en la captura.</div>
+  </div>
+
   <div class="recording-indicator" id="recordingIndicator">
     <div class="pulse"></div>
     Grabando...
@@ -371,6 +382,9 @@
     </div>
   </div>
 
+  <!-- Single source of truth for presets + filter parser. Loaded before
+       popup.js so window.CaptureConfig is available. -->
+  <script src="src/capture-config.js"></script>
   <script src="src/popup.js"></script>
 </body>
 </html>
