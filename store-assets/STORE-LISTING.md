@@ -11,7 +11,7 @@ Capture every API call on any website. Reverse engineer undocumented APIs instan
 ## Detailed Description
 
 ### Overview
-API Reverse Engineer is a Chrome extension that captures every API call (fetch + XHR) while you browse normally. No DevTools needed—just one click to start recording, and download a clean JSON with all endpoints captured.
+API Reverse Engineer captures every API call (fetch + XHR) while you browse normally. No DevTools needed—one click to start recording, and download a JSON-Lines file with every request captured.
 
 **Perfect for:**
 - Reverse engineering undocumented private APIs
@@ -22,52 +22,41 @@ API Reverse Engineer is a Chrome extension that captures every API call (fetch +
 
 ### How It Works
 1. Open the extension on any tab
-2. *(Optional)* Set a URL filter to reduce noise
-3. Click **▶ Start Recording**
+2. Pick a preset (LinkedIn, GraphQL, JSON API… or Generic) or set a URL filter
+3. Click **▶ Start Recording** — pause and resume anytime
 4. Use the website as you normally would
-5. Click **⏹ Stop → ⬇ Download JSON**
+5. Click **⏹ Stop → ⬇ Download JSONL**
 
-You get a complete JSON export with every unique endpoint: methods, headers, request/response bodies, status codes, and timing info.
+You get a JSON-Lines export of every captured request: method, URL, request/response headers and bodies, status codes, and timing. Need the auth to replay an API? One click downloads the site's cookies (including httpOnly tokens like `li_at`) to a local `.json`.
 
 ### Key Features
 ✅ **Intercepts fetch + XHR requests** — catches all modern API calls  
-✅ **Tab-scoped recording** — only captures from the tab where you start  
-✅ **Live counter badge** — see request count in real-time  
-✅ **Optional URL filter** — filter by domain, path, or keyword  
-✅ **Deduplication** — endpoints array shows one entry per unique endpoint  
-✅ **Works everywhere** — any website, any protocol  
-✅ **Clean dark UI** — minimal, fast, keyboard-friendly  
-✅ **Manifest V3** — modern, secure Chrome extension standard  
+✅ **Tab-scoped recording** — only the active tab  
+✅ **Live request counter** on the toolbar icon  
+✅ **Pause / Resume** — survives the MV3 service worker sleeping, no lost captures  
+✅ **Presets + URL filter** — domain, path, keyword, regex, glob, with noise exclusion  
+✅ **Secret redaction ON by default** — cookies, CSRF, and auth tokens masked before saving  
+✅ **Download site cookies** (incl. httpOnly) for API replay  
+✅ **Streams to disk (OPFS)** — handles long, large capture sessions  
+✅ **Clean dark UI · Manifest V3**  
 
 ### Output Format
-Downloaded file: `api-capture-{site}-{timestamp}.json`
+Downloaded file: `are-capture-{preset}-{timestamp}.jsonl` — one JSON object per line:
 
-```json
-{
-  "meta": {
-    "capturedAt": "2026-02-20T14:32:00Z",
-    "total": 47,
-    "uniqueEndpoints": 23,
-    "site": "www.example.com"
-  },
-  "endpoints": [
-    {
-      "method": "POST",
-      "url": "https://api.example.com/v1/posts",
-      "requestHeaders": {...},
-      "requestBody": {...},
-      "status": 200,
-      "responseBody": {...},
-      "duration": 142,
-      "timestamp": "2026-02-20T14:32:00Z"
-    },
-    ...
-  ]
-}
+```
+{"ts":"2026-06-24T14:32:00Z","preset":"linkedin-voyager","request":{"method":"POST","url":"https://www.linkedin.com/voyager/api/...","headers":{...},"body":{...}},"response":{"status":200,"headers":{...},"body":{...}},"duration_ms":142}
 ```
 
+When redaction is on (default), secrets (cookies, CSRF, auth tokens) are replaced with `[REDACTED:<name>]` before the file is written.
+
 ### Privacy & Security
-**Local-only recording** — All captures stay on your device. No server uploads, no analytics, no tracking. Your data never leaves your browser.
+**Local-only** — All captures stay on your device. No server uploads, no analytics, no tracking. Secrets (cookies, CSRF, auth tokens) are redacted by default. The `cookies` permission is used only when you click Download Cookies; `unlimitedStorage` only to stream large captures to disk (OPFS). Nothing is ever uploaded.
+
+### Permission justifications (for the Chrome Web Store "Privacy practices" tab)
+- **cookies:** Powers the optional "Download Cookies" button. Only on an explicit user click, the extension reads the active tab site's cookies (including httpOnly auth cookies like `li_at`) via `chrome.cookies` and saves them to a local `.json` so the user can replay the site's own API. Never part of a capture, never transmitted off-device.
+- **unlimitedStorage:** Lets the extension stream large API captures to the Origin Private File System (OPFS) without the ~10 MB quota, so long recording sessions don't lose data when the MV3 service worker restarts. All data stays on the user's device.
+- **host `<all_urls>` / scripting:** To inject the fetch/XHR interceptor into the tab the user chose to record. Runs only on the active recording tab.
+- **tabs:** To scope recording to the active tab and name the download file.
 
 Learn more: [Privacy Policy](https://cristiantala.com/privacy/api-reverse-engineer/)
 

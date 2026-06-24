@@ -4,7 +4,7 @@
 
 Built by [@ctala](https://github.com/ctala) | 🌐 [cristiantala.com](https://cristiantala.com)
 
-![Version](https://img.shields.io/badge/version-1.3.0-22c55e)
+![Version](https://img.shields.io/badge/version-1.7.0-22c55e)
 ![Manifest](https://img.shields.io/badge/manifest-v3-3b82f6)
 ![License](https://img.shields.io/badge/license-MIT-94a3b8)
 
@@ -15,14 +15,30 @@ Built by [@ctala](https://github.com/ctala) | 🌐 [cristiantala.com](https://cr
 Instead of digging through DevTools Network tab, this extension gives you a clean one-click recording experience:
 
 1. Open the extension on any tab
-2. Set an optional URL filter (e.g. `api.mysite.com`)
-3. Click **Start Recording**
+2. Pick a preset (LinkedIn, GraphQL, JSON API… or Generic) or set a URL filter
+3. Click **Start Recording** — pause and resume anytime
 4. Use the website as you normally would
-5. Click **Stop → Download JSON**
+5. Click **Stop → Download JSONL**
 
-You get a clean JSON file with every unique endpoint captured — methods, headers, request bodies, response bodies, status codes, and timing.
+You get a JSON-Lines file with every captured request — method, URL, request/response headers and bodies, status codes, and timing. Live counters show total and unique endpoints. Need the auth to replay an API? One click downloads the site's cookies (incl. httpOnly tokens like `li_at`) to a local `.json`, with the `Cookie` header ready for curl/Postman.
 
 **Recording is scoped to the active tab only.** Other tabs are not affected.
+
+---
+
+## ✨ Features
+
+- **Intercepts fetch + XHR** on any website — no DevTools needed
+- **Tab-scoped recording** — only the active tab
+- **Live request counter** on the toolbar icon
+- **Pause / Resume** — survives the MV3 service worker sleeping, no lost captures
+- **Presets + URL filter** (domain, path, keyword, regex, glob) with noise exclusion
+- **Secret redaction ON by default** — cookies, CSRF, and auth tokens masked before saving
+- **Download site cookies** (incl. httpOnly) for API replay
+- **Streams to disk (OPFS)** — handles long, large capture sessions
+- **Clean dark UI · Manifest V3**
+
+Privacy: all captures stay on your device. Secrets are redacted by default. The `cookies` permission is used only when you click Download Cookies. No servers, no analytics, no tracking.
 
 ---
 
@@ -55,6 +71,9 @@ Get the extension directly from the Chrome Web Store:
 ---
 
 ## Changelog
+
+> Full history in **[CHANGELOG.md](CHANGELOG.md)**. Highlights since v1.3.0:
+> **1.7.0** download site cookies (.json) for replay, drop legacy JSON-array · **1.6.0** real LinkedIn preset (rsc-action) + filter fix + live counter · **1.5.0** the extension captures again (importScripts fix) + async OPFS + Pause/Resume · **1.4.x** OPFS streaming buffer.
 
 ### v1.3.0 (2026-06-23) — Capture Mode
 **Added:**
