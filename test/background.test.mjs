@@ -187,13 +187,13 @@ test('background: download works after stop, JSONL has all 10 events (bug #3)', 
   const lines = text.split('\n').filter((l) => l.length > 0);
   assert.equal(lines.length, 10, 'JSONL body must have exactly 10 lines');
 
-  // Each line parses as JSON. The OPFS file stores raw entries (the
-  // formatted `_toJsonlLine` shape with `request.method` is only applied
-  // on the in-memory fallback path).
+  // Each line parses as JSON in the canonical _toJsonlLine shape. Since
+  // ADR-0003 the OPFS download path normalizes the raw stored entries to the
+  // same {request:{...}} shape as the in-memory path (consistent output).
   for (let i = 0; i < 10; i++) {
     const obj = JSON.parse(lines[i]);
-    assert.equal(obj.url, 'https://www.linkedin.com/voyager/api/feed/' + i);
-    assert.equal(obj.method, 'GET');
+    assert.equal(obj.request.url, 'https://www.linkedin.com/voyager/api/feed/' + i);
+    assert.equal(obj.request.method, 'GET');
   }
 });
 
@@ -231,8 +231,8 @@ test('background: OPFS upgrade migrates captures (no duplicates)', async () => {
 
   for (let i = 0; i < 5; i++) {
     const obj = JSON.parse(lines[i]);
-    assert.equal(obj.url, 'https://www.linkedin.com/voyager/api/migrate/' + i);
-    assert.equal(obj.method, 'GET');
+    assert.equal(obj.request.url, 'https://www.linkedin.com/voyager/api/migrate/' + i);
+    assert.equal(obj.request.method, 'GET');
   }
 });
 

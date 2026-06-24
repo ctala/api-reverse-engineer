@@ -4,6 +4,43 @@ All notable changes to API Reverse Engineer are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-06-24 — La extensión vuelve a capturar + OPFS async + pausa/continuar
+
+### Fixed (regresiones que rompían la captura)
+
+- **B1 — la extensión no capturaba NADA en Chrome real.** El service worker es
+  script clásico (manifest sin `type:module`) y Chrome carga solo
+  `background.js`; los módulos `opfs-buffer`/`memory-buffer` nunca se cargaban →
+  `self.OpfsBuffer`/`MemoryBuffer` null → 0 capturas. Fix: `importScripts` en el
+  SW + rama worker faltante en el UMD de `opfs-buffer`. Los 71 tests pasaban
+  porque el mock pre-inyectaba los buffers (verde contra el mock, roto en prod).
+- **B2 — el filtro de preset descartaba toda la captura.** `content.js` corría un
+  filtro legacy `url.includes(regexCrudo)` aun con `captureConfig` estructurado.
+- **OPFS nunca funcionó en producción (ADR-0003).** `createSyncAccessHandle()` NO
+  existe en MV3 service workers → desde v1.4.0 todo corría en memoria-fallback y
+  el archivo OPFS quedaba en 0 líneas. Reescrito a la API **async**
+  (`createWritable` + `getFile`), que sí funciona en el SW. Append batcheado +
+  `flush()` para durabilidad.
+- B9 (guard `__ARE_PATCHED__` anti-doble-wrap) · B24 (versión del PING desde el manifest).
+
+### Added
+
+- **Pausa / Continuar (ADR-0003).** Verbos `PAUSE`/`RESUME` + botones en el popup.
+  La grabación sobrevive al sleep del service worker: `restoreFromExisting()` se
+  cablea en el wake del SW y reconstruye contador + dedup desde disco. `START`
+  trunca (sesión nueva); `RESUME` appendea (continúa). Badge ámbar "II" en pausa.
+- **Testing automatizado sin intervención humana.** Harness honesto que carga el
+  SW como Chrome (`test/_sw-loader.mjs` vía `node:vm`, sin pre-inyectar globals;
+  `sw-wiring.test.mjs` reproduce B1). E2E Playwright en Chromium real
+  (`record-download`, `sw-restart-resume` con CDP `stopAllWorkers`). CI en
+  `.github/workflows/test.yml`. `npm test` → 78 unit · `npm run test:e2e` → 2 e2e.
+- Subagentes en `.claude/agents/` (Chrome MV3 Engineer + API Reverse Engineer).
+
+### Changed
+
+- Descarga OPFS normalizada al shape canónico `_toJsonlLine` (igual que el path
+  de memoria). Limpieza de artifacts/drafts del repo + `.gitignore`.
+
 ## [1.4.0] — 2026-06-24 — OPFS streaming buffer (ADR-0002)
 
 ### Changed

@@ -118,10 +118,12 @@ if (typeof importScripts === 'function') {
   var inMemoryCount = 0;       // total events this session
   var inMemoryUnique = new Set(); // METHOD:URL dedup keys
   var isRecording = false;
+  var paused = false;            // Fase 2: PAUSED vs IDLE (resume sin truncar)
   var recordingTabId = null;
   var captureConfig = null;
   var outputFormat = 'jsonl';
   var filterMode = 'OR';
+  var sessionId = null;          // Fase 2: id de la sesión OPFS activa
 
   // OPFS streaming buffer (primary path).
   var opfsBuffer = OpfsBuffer ? OpfsBuffer.createOpfsBuffer({ filename: 'captures.jsonl' }) : null;
@@ -142,26 +144,23 @@ if (typeof importScripts === 'function') {
   // ---------------------------------------------------------------------------
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
     chrome.storage.session.get(
-      ['isRecording', 'recordingTabId', 'captureConfig', 'outputFormat', 'filterMode'],
+      ['isRecording', 'paused', 'recordingTabId', 'captureConfig', 'outputFormat', 'filterMode', 'sessionId'],
       function (data) {
-        if (data && data.isRecording) {
-          isRecording = data.isRecording;
+        if (data && (data.isRecording || data.paused)) {
+          isRecording = !!data.isRecording;
+          paused = !!data.paused;
           recordingTabId = data.recordingTabId || null;
           captureConfig = data.captureConfig || null;
           outputFormat = data.outputFormat || 'jsonl';
           filterMode = data.filterMode || 'OR';
-          // SW restart reset activeBuffer to null. Re-point it to the safe
-          // memory buffer so the first CAPTURE after restart doesn't get
-          // dropped by the `if (activeBuffer)` guard in the CAPTURE handler.
-          if (!activeBuffer && memoryBuffer) {
-            activeBuffer = memoryBuffer;
-          }
+          sessionId = data.sessionId || null;
+          // B4 fix (Fase 2 / ADR-0003): re-open the OPFS file in append mode
+          // and rebuild the counter + dedup from disk, so a recording/paused
+          // session survives the SW going idle. v1.4.2 lost the whole buffer
+          // on every SW wake-up (the file was orphaned, counters reset to 0).
+          _restoreSessionFromDisk();
           // Restore the red-dot badge so the user sees the recording state.
-          if (recordingTabId) _setBadge(recordingTabId);
-          // captured[] and counters start empty after SW restart.
-          // The OPFS file persists on disk, so on the next START we truncate
-          // it (fresh session per ADR-0002 decision). If the user wants to
-          // resume an old session, that is a F4 feature.
+          if (isRecording && recordingTabId) _setBadge(recordingTabId);
         }
       }
     );
@@ -172,14 +171,61 @@ if (typeof importScripts === 'function') {
     try {
       chrome.storage.session.set({
         isRecording: isRecording,
+        paused: paused,
         recordingTabId: recordingTabId,
         captureConfig: captureConfig,
         outputFormat: outputFormat,
-        filterMode: filterMode
+        filterMode: filterMode,
+        sessionId: sessionId
       });
     } catch (e) {
       console.error('[ARE] Failed to persist session:', e);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Re-open the persisted OPFS session after an SW restart, or to RESUME a
+  // paused session — WITHOUT truncating (ADR-0003). Rebuilds the dedup set +
+  // counter from the file (robust source of truth) and migrates any captures
+  // that arrived in the small async window while the file was being re-opened.
+  // ---------------------------------------------------------------------------
+  function _restoreSessionFromDisk() {
+    // Sync safety net: a CAPTURE arriving during the async re-open window goes
+    // to a fresh memory buffer; we migrate it to OPFS once the file re-opens.
+    if (memoryBuffer) { memoryBuffer.clear(); activeBuffer = memoryBuffer; }
+    if (!opfsBuffer) { return Promise.resolve(); }
+    return opfsBuffer.restoreFromExisting().then(function (ok) {
+      if (!ok) {
+        // No file to restore — stay on the memory buffer; next START inits fresh.
+        activeBuffer = memoryBuffer;
+        return;
+      }
+      // Rebuild dedup from the file content (readAll is async in ADR-0003).
+      return opfsBuffer.readAll().then(function (text) {
+        var lines = String(text).split('\n');
+        inMemoryUnique = new Set();
+        for (var i = 0; i < lines.length; i++) {
+          if (!lines[i]) continue;
+          try {
+            var o = JSON.parse(lines[i]);
+            var u = o.url || (o.request && o.request.url) || '';
+            var m = o.method || (o.request && o.request.method) || '';
+            inMemoryUnique.add(m + ':' + String(u).split('?')[0]);
+          } catch (e) {}
+        }
+        // Migrate captures that arrived during the re-open window.
+        var pending = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
+        activeBuffer = opfsBuffer;
+        for (var j = 0; j < pending.length; j++) {
+          opfsBuffer.append(pending[j]);
+          inMemoryUnique.add(pending[j].method + ':' + String(pending[j].url || '').split('?')[0]);
+        }
+        inMemoryCount = opfsBuffer.getCount();
+      });
+    }).catch(function (e) {
+      console.error('[ARE] restore from disk failed:', e);
+      activeBuffer = memoryBuffer;
+    });
   }
 
   // Bug fix 2026-06-24: poll the content script (ISOLATED world) until it
@@ -239,6 +285,14 @@ if (typeof importScripts === 'function') {
       } catch (e) {}
       return;
     }
+    if (paused) {
+      // Paused: amber "II" so the user sees the session is held, not stopped.
+      try {
+        chrome.action.setBadgeText({ text: 'II', tabId: tabId });
+        chrome.action.setBadgeBackgroundColor({ color: '#f59e0b', tabId: tabId });
+      } catch (e) {}
+      return;
+    }
     // When stopped, clear badge.
     try { chrome.action.setBadgeText({ text: '', tabId: tabId }); } catch (e) {}
   }
@@ -253,6 +307,13 @@ if (typeof importScripts === 'function') {
       // CAPTURE
       // -----------------------------------------------------------------------
       if (msg.type === 'CAPTURE') {
+        // Drop captures when not actively recording (paused or stopped). The
+        // injected interceptor keeps dispatching events; the SW (and content
+        // script) gate on the recording state so a paused session stays clean.
+        if (!isRecording) {
+          respond({ ok: true });
+          return true;
+        }
         var tabId = sender.tab && sender.tab.id;
         if (recordingTabId !== null && tabId !== recordingTabId) {
           respond({ ok: true });
@@ -323,6 +384,8 @@ if (typeof importScripts === 'function') {
         var isFallback = activeBuffer === memoryBuffer || !activeBuffer || (opfsBuffer && opfsBuffer.inFallbackMode());
         respond({
           isRecording: isRecording,
+          paused: paused,
+          recoverable: (paused || (!isRecording && inMemoryCount > 0)),
           recordingTabId: recordingTabId,
           total: inMemoryCount,
           unique: unique,
@@ -345,7 +408,11 @@ if (typeof importScripts === 'function') {
       // buffer. No duplicates in the output, no silent loss.
       // -----------------------------------------------------------------------
       if (msg.type === 'START') {
+        // START = sesión NUEVA: trunca el archivo OPFS (init). Es el único
+        // verbo (con CLEAR) que destruye datos. RESUME, en cambio, appendea.
         isRecording = true;
+        paused = false;
+        sessionId = 'sess-' + new Date().getTime();
         recordingTabId = msg.tabId || null;
         var filter = msg.filter || '';
         captureConfig = msg.captureConfig || null;
@@ -446,6 +513,7 @@ if (typeof importScripts === 'function') {
       // -----------------------------------------------------------------------
       if (msg.type === 'STOP') {
         isRecording = false;
+        paused = false;
         _persistSession();
 
         // Close the OPFS access handle (keep the file handle for download).
@@ -463,6 +531,64 @@ if (typeof importScripts === 'function') {
         if (recordingTabId) _setBadge(recordingTabId);
         recordingTabId = null;
 
+        respond({ ok: true });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // PAUSE (Fase 2) — detiene la captura SIN truncar: cierra el handle OPFS
+      // pero conserva el archivo + recordingTabId + sessionId. RESUME continúa
+      // appendeando al mismo archivo (ADR-0003). NO es STOP (que cierra la
+      // sesión) ni START (que la trunca).
+      // -----------------------------------------------------------------------
+      if (msg.type === 'PAUSE') {
+        isRecording = false;
+        paused = true;
+        if (opfsBuffer) opfsBuffer.close(); // handle cerrado, archivo intacto
+        _persistSession();
+        if (recordingTabId && typeof chrome !== 'undefined' && chrome.tabs) {
+          try {
+            chrome.tabs.sendMessage(recordingTabId, { type: 'STOP_RECORDING' }).catch(function () {});
+          } catch (e) {}
+        }
+        if (recordingTabId) _setBadge(recordingTabId);
+        respond({ ok: true });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // RESUME (Fase 2) — re-abre la sesión OPFS en modo append (NO trunca),
+      // reconstruye contador/dedup desde el archivo, y re-arma el interceptor
+      // en la pestaña (idempotente vía __ARE_PATCHED__).
+      // -----------------------------------------------------------------------
+      if (msg.type === 'RESUME') {
+        if (!paused) {
+          respond({ ok: false, error: 'No hay sesión pausada para continuar' });
+          return true;
+        }
+        isRecording = true;
+        paused = false;
+        _restoreSessionFromDisk().then(function () {
+          _persistSession();
+          if (recordingTabId && typeof chrome !== 'undefined' && chrome.scripting) {
+            chrome.scripting.executeScript({
+              target: { tabId: recordingTabId },
+              world: 'MAIN',
+              files: ['src/capture-config.js', 'src/injected.js']
+            }).then(function () {
+              return _waitForContentScript(recordingTabId, 2000);
+            }).then(function (ready) {
+              if (!ready) return;
+              chrome.tabs.sendMessage(recordingTabId, { type: 'START_RECORDING', filter: '' }).catch(function () {});
+              if (captureConfig) {
+                chrome.tabs.sendMessage(recordingTabId, { type: 'SET_CAPTURE_CONFIG', captureConfig: captureConfig }).catch(function () {});
+              }
+            }).catch(function (err) {
+              console.error('[ARE] RESUME re-inject failed:', err);
+            });
+          }
+        });
+        _setBadge(recordingTabId);
         respond({ ok: true });
         return true;
       }
@@ -530,15 +656,27 @@ if (typeof importScripts === 'function') {
         // show the user what went wrong.
         if (activeBuffer === opfsBuffer && opfsBuffer && !opfsBuffer.inFallbackMode() && typeof opfsBuffer.getFile === 'function') {
           opfsBuffer.getFile().then(function (file) {
-            return file.arrayBuffer();
-          }).then(function (buf) {
-            // Convert to base64 so the message payload survives the
-            // structured-clone transport (ArrayBuffer is OK, but base64
-            // is portable and tested). Then in the popup we decode + Blob.
-            var bytes = new Uint8Array(buf);
-            var bin = '';
-            for (var i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
-            var b64 = (typeof btoa === 'function') ? btoa(bin) : Buffer.from(bin, 'binary').toString('base64');
+            return file.text();
+          }).then(function (text) {
+            // The OPFS file streams RAW entries at capture time. Normalize them
+            // to the canonical _toJsonlLine shape on download so the OPFS path
+            // produces the SAME output as the in-memory path (and the linkedin
+            // importer expects). Before ADR-0003 this path never ran (OPFS was
+            // always in fallback), so the inconsistency was latent.
+            var rawLines = String(text).split('\n');
+            var out = [];
+            for (var i = 0; i < rawLines.length; i++) {
+              if (!rawLines[i].trim()) continue;
+              try { out.push(_toJsonlLine(JSON.parse(rawLines[i]))); }
+              catch (e) { out.push(rawLines[i]); }
+            }
+            var raw = out.join('\n') + (out.length ? '\n' : '');
+            var b64;
+            try {
+              b64 = (typeof btoa === 'function') ? btoa(unescape(encodeURIComponent(raw))) : Buffer.from(raw, 'utf-8').toString('base64');
+            } catch (e2) {
+              b64 = Buffer.from(raw, 'utf-8').toString('base64');
+            }
             respond({
               ok: true,
               data: b64,
@@ -546,8 +684,8 @@ if (typeof importScripts === 'function') {
               mime: 'application/x-ndjson',
               filename: 'are-capture-' + preset + '-' + isoStamp + '.jsonl',
               format: 'jsonl',
-              lineCount: inMemoryCount,
-              bytes: bytes.byteLength
+              lineCount: out.length,
+              bytes: (typeof TextEncoder !== 'undefined') ? new TextEncoder().encode(raw).byteLength : raw.length
             });
           }).catch(function (e) {
             console.error('[ARE] OPFS read failed, falling back to in-memory JSONL:', e);

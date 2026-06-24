@@ -14,6 +14,7 @@
  */
 
 const btnRecord = document.getElementById('btnRecord');
+const btnPause = document.getElementById('btnPause');
 const btnDownload = document.getElementById('btnDownload');
 const btnClear = document.getElementById('btnClear');
 const filterInput = document.getElementById('filterInput');
@@ -27,6 +28,7 @@ const endpointList = document.getElementById('endpointList');
 const recordingIndicator = document.getElementById('recordingIndicator');
 
 let isRecording = false;
+let paused = false;
 
 // Preset defaults — mirrors src/capture-config.js PRESETS (kept here so the
 // popup can render the dropdown defaults without bundling the helpers).
@@ -128,10 +130,12 @@ function updateRedactHint() {
 // Cargar estado al abrir popup
 function loadState() {
   chrome.runtime.sendMessage({ type: 'GET_STATE' }, (res) => {
-    if (!res) return;
+    if (chrome.runtime.lastError || !res) return; // B6: guard contra SW dormido
     isRecording = res.isRecording;
+    paused = res.paused;
     updateUI(res.total, res.unique);
     refreshPreview();
+    maybeShowPausedBanner(res);
   });
 
   // Restore the last used settings from chrome.storage.local.
@@ -172,17 +176,29 @@ function updateUI(total, unique) {
   totalCount.textContent = total || 0;
   uniqueCount.textContent = unique || 0;
 
+  // Tres estados (Fase 2): IDLE · RECORDING · PAUSED.
   if (isRecording) {
     btnRecord.textContent = '⏹ Detener';
     btnRecord.classList.add('recording');
+    btnPause.style.display = '';
+    btnPause.textContent = '⏸ Pausar';
     recordingIndicator.classList.add('active');
+  } else if (paused) {
+    btnRecord.textContent = '⏹ Detener';
+    btnRecord.classList.add('recording');
+    btnPause.style.display = '';
+    btnPause.textContent = '▶ Continuar';
+    recordingIndicator.classList.remove('active');
   } else {
     btnRecord.textContent = '▶ Iniciar';
     btnRecord.classList.remove('recording');
+    btnPause.style.display = 'none';
     recordingIndicator.classList.remove('recording');
     recordingIndicator.classList.remove('active');
   }
 
+  // En modo OPFS no se descarga "en caliente"; permitimos descargar si hay
+  // datos (total > 0), incluso pausado.
   btnDownload.disabled = (total === 0);
 }
 
@@ -208,13 +224,28 @@ function renderEndpoints(endpoints) {
   }).join('');
 }
 
+function maybeShowPausedBanner(state) {
+  if (state && state.paused) {
+    endpointList.innerHTML = '<div class="empty-state">⏸ Sesión pausada · <strong style="color:#f59e0b">' +
+      (state.total || 0) + '</strong> eventos<br>Continuar para seguir capturando</div>';
+  }
+}
+
 function refreshPreview() {
   chrome.runtime.sendMessage({ type: 'GET_PREVIEW' }, (res) => {
-    if (res && res.endpoints) renderEndpoints(res.endpoints);
+    if (chrome.runtime.lastError || !res) return;
+    // B13: en modo OPFS el preview viene vacío POR DISEÑO ([] + opfsMode). No
+    // pisar el mensaje "Grabando…/Pausado" con el empty-state de "Iniciar".
+    if (res.opfsMode) return;
+    if (res.endpoints) renderEndpoints(res.endpoints);
   });
 
   chrome.runtime.sendMessage({ type: 'GET_STATE' }, (res) => {
-    if (res) updateUI(res.total, res.unique);
+    if (chrome.runtime.lastError || !res) return;
+    isRecording = res.isRecording;
+    paused = res.paused;
+    updateUI(res.total, res.unique);
+    maybeShowPausedBanner(res);
   });
 }
 
@@ -281,7 +312,32 @@ btnRecord.addEventListener('click', async () => {
     });
   } else {
     chrome.runtime.sendMessage({ type: 'STOP' }, () => {
+      if (chrome.runtime.lastError) return;
       isRecording = false;
+      paused = false;
+      refreshPreview();
+    });
+  }
+});
+
+// Botón Pausar / Continuar (Fase 2). Visible solo cuando hay sesión activa
+// o pausada. PAUSE conserva el archivo OPFS; RESUME continúa appendeando.
+btnPause.addEventListener('click', () => {
+  if (isRecording) {
+    chrome.runtime.sendMessage({ type: 'PAUSE' }, () => {
+      if (chrome.runtime.lastError) return;
+      isRecording = false;
+      paused = true;
+      const total = parseInt(totalCount.textContent, 10) || 0;
+      const unique = parseInt(uniqueCount.textContent, 10) || 0;
+      updateUI(total, unique);
+      maybeShowPausedBanner({ paused: true, total });
+    });
+  } else if (paused) {
+    chrome.runtime.sendMessage({ type: 'RESUME' }, (res) => {
+      if (chrome.runtime.lastError || (res && res.ok === false)) return;
+      isRecording = true;
+      paused = false;
       refreshPreview();
     });
   }
@@ -360,14 +416,16 @@ btnClear.addEventListener('click', () => {
 // is actively recording (because isRecording stays false module-level until
 // GET_STATE returns — and the previous polling did nothing when it was false).
 setInterval(() => {
-  if (isRecording) {
+  if (isRecording || paused) {
     refreshPreview();
   } else {
-    // Re-fetch state — if SW is now awake and recording, this flips the UI.
+    // Re-fetch state — if SW is now awake and recording/paused, flips the UI.
     chrome.runtime.sendMessage({ type: 'GET_STATE' }, (res) => {
-      if (!res) return;
+      if (chrome.runtime.lastError || !res) return;
       isRecording = res.isRecording;
+      paused = res.paused;
       updateUI(res.total, res.unique);
+      maybeShowPausedBanner(res);
     });
   }
 }, 1500);
