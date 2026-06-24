@@ -78,12 +78,13 @@ Audit what data is being sent and where. Detect privacy violations.
 See how professional web apps handle authentication, pagination, error handling, and more.
 
 ### Roadmap
-- Firefox support (WebExtensions)
-- Export as OpenAPI / Swagger spec
-- Copy endpoint as cURL command
-- Response diffing (track API changes)
+- **WebSocket + SSE capture** — reverse engineer realtime / chat protocols (next up)
+- Export to Postman collection / OpenAPI spec
+- Curated preset library (LinkedIn, Skool, Stripe…)
 - HAR import/export
-- Replay captured requests
+- Firefox support (WebExtensions)
+
+Stays 100% local — no accounts, no cloud, no server-side component. (Full roadmap: `ROADMAP.md`.)
 
 ### Support & Contributing
 Found a bug? Have a feature request?  

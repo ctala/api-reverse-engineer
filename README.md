@@ -40,6 +40,8 @@ You get a JSON-Lines file with every captured request — method, URL, request/r
 
 Privacy: all captures stay on your device. Secrets are redacted by default. The `cookies` permission is used only when you click Download Cookies. No servers, no analytics, no tracking.
 
+**Roadmap:** see [ROADMAP.md](ROADMAP.md) — next up: **WebSocket capture** for realtime / chat protocols.
+
 ---
 
 ## Screenshots
