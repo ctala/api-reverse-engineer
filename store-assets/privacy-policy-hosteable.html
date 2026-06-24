@@ -169,7 +169,7 @@
       <li><span class="cross">❌</span> Does NOT use analytics or tracking</li>
       <li><span class="cross">❌</span> Does NOT store data in cloud services</li>
       <li><span class="cross">❌</span> Does NOT require account login</li>
-      <li><span class="cross">❌</span> Does NOT use cookies</li>
+      <li><span class="cross">❌</span> Does NOT use cookies for tracking, and never sends any cookie off your device</li>
       <li><span class="cross">❌</span> Does NOT log user behavior</li>
     </ul>
     
@@ -184,7 +184,10 @@
     
     <h3>3. Popup UI</h3>
     <p>Displays captured data, generates JSON exports. All processing happens in-browser.</p>
-    
+
+    <h3>4. Download Cookies (opt-in, on demand)</h3>
+    <p>The extension requests the <code>cookies</code> permission solely to power the optional <strong>Download Cookies</strong> button. When &mdash; and only when &mdash; you click it, the extension reads the cookies of the active tab's site (including httpOnly authentication cookies such as <code>li_at</code> / <code>JSESSIONID</code>) via <code>chrome.cookies</code> and saves them to a local <code>.json</code> file so you can replay the site's own API. These cookies are <strong>never part of a capture and are never transmitted anywhere</strong> &mdash; they go straight to a file on your device. If you never click the button, no cookies are ever read.</p>
+
     <p style="margin-top: 20px;"><strong>No external calls are made at any point.</strong></p>
     
     <h2>Data You Generate</h2>
