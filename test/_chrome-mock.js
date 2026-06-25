@@ -206,35 +206,45 @@ export function makeOpfsMock() {
           size: data.byteLength,
           async arrayBuffer() {
             return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+          },
+          async text() {
+            return new TextDecoder().decode(data);
           }
         };
       },
-      async createSyncAccessHandle() {
+      // Async OPFS write API (the one that actually exists in MV3 service
+      // workers — createSyncAccessHandle does NOT). Mirrors createWritable.
+      async createWritable(opts) {
+        const keep = !!(opts && opts.keepExistingData);
+        const existing = dir.get(name);
+        let data = (keep && existing && existing.data) ? existing.data.slice() : new Uint8Array(0);
+        let pos = 0;
         return {
-          write(buffer, opts) {
-            const at = (opts && opts.at !== undefined) ? opts.at : currentSize;
-            const existing = dir.get(name);
-            const old = (existing && existing.data) || new Uint8Array(0);
-            const newSize = Math.max(old.byteLength, at + buffer.byteLength);
-            const next = new Uint8Array(newSize);
-            next.set(old, 0);
-            next.set(new Uint8Array(buffer), at);
-            dir.set(name, { kind: 'file', data: next });
-            currentSize = Math.max(currentSize, at + buffer.byteLength);
-            writes.push({ at, length: buffer.byteLength, content: buffer });
+          async seek(p) { pos = p; },
+          async write(chunk) {
+            let bytes;
+            if (typeof chunk === 'string') {
+              bytes = new TextEncoder().encode(chunk);
+            } else if (chunk && chunk.type === 'write') {
+              if (chunk.position !== undefined) pos = chunk.position;
+              bytes = typeof chunk.data === 'string' ? new TextEncoder().encode(chunk.data) : new Uint8Array(chunk.data);
+            } else if (chunk) {
+              bytes = new Uint8Array(chunk.buffer || chunk);
+            } else {
+              bytes = new Uint8Array(0);
+            }
+            const end = pos + bytes.byteLength;
+            if (end > data.byteLength) {
+              const next = new Uint8Array(end);
+              next.set(data, 0);
+              data = next;
+            }
+            data.set(bytes, pos);
+            pos = end;
+            writes.push({ at: end - bytes.byteLength, length: bytes.byteLength });
           },
-          truncate(size) {
-            const existing = dir.get(name);
-            const old = (existing && existing.data) || new Uint8Array(0);
-            const next = old.slice(0, size);
-            dir.set(name, { kind: 'file', data: next });
-            currentSize = size;
-          },
-          getSize() {
-            const existing = dir.get(name);
-            return existing ? existing.data.byteLength : 0;
-          },
-          close() { /* no-op */ }
+          async truncate(size) { data = data.slice(0, size); if (pos > size) pos = size; },
+          async close() { dir.set(name, { kind: 'file', data }); currentSize = data.byteLength; }
         };
       }
     };
@@ -300,35 +310,45 @@ export function makeDeferredOpfsMock() {
           size: data.byteLength,
           async arrayBuffer() {
             return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+          },
+          async text() {
+            return new TextDecoder().decode(data);
           }
         };
       },
-      async createSyncAccessHandle() {
+      // Async OPFS write API (the one that actually exists in MV3 service
+      // workers — createSyncAccessHandle does NOT). Mirrors createWritable.
+      async createWritable(opts) {
+        const keep = !!(opts && opts.keepExistingData);
+        const existing = dir.get(name);
+        let data = (keep && existing && existing.data) ? existing.data.slice() : new Uint8Array(0);
+        let pos = 0;
         return {
-          write(buffer, opts) {
-            const at = (opts && opts.at !== undefined) ? opts.at : currentSize;
-            const existing = dir.get(name);
-            const old = (existing && existing.data) || new Uint8Array(0);
-            const newSize = Math.max(old.byteLength, at + buffer.byteLength);
-            const next = new Uint8Array(newSize);
-            next.set(old, 0);
-            next.set(new Uint8Array(buffer), at);
-            dir.set(name, { kind: 'file', data: next });
-            currentSize = Math.max(currentSize, at + buffer.byteLength);
-            writes.push({ at, length: buffer.byteLength, content: buffer });
+          async seek(p) { pos = p; },
+          async write(chunk) {
+            let bytes;
+            if (typeof chunk === 'string') {
+              bytes = new TextEncoder().encode(chunk);
+            } else if (chunk && chunk.type === 'write') {
+              if (chunk.position !== undefined) pos = chunk.position;
+              bytes = typeof chunk.data === 'string' ? new TextEncoder().encode(chunk.data) : new Uint8Array(chunk.data);
+            } else if (chunk) {
+              bytes = new Uint8Array(chunk.buffer || chunk);
+            } else {
+              bytes = new Uint8Array(0);
+            }
+            const end = pos + bytes.byteLength;
+            if (end > data.byteLength) {
+              const next = new Uint8Array(end);
+              next.set(data, 0);
+              data = next;
+            }
+            data.set(bytes, pos);
+            pos = end;
+            writes.push({ at: end - bytes.byteLength, length: bytes.byteLength });
           },
-          truncate(size) {
-            const existing = dir.get(name);
-            const old = (existing && existing.data) || new Uint8Array(0);
-            const next = old.slice(0, size);
-            dir.set(name, { kind: 'file', data: next });
-            currentSize = size;
-          },
-          getSize() {
-            const existing = dir.get(name);
-            return existing ? existing.data.byteLength : 0;
-          },
-          close() { /* no-op */ }
+          async truncate(size) { data = data.slice(0, size); if (pos > size) pos = size; },
+          async close() { dir.set(name, { kind: 'file', data }); currentSize = data.byteLength; }
         };
       }
     };

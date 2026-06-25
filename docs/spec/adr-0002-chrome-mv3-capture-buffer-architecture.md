@@ -1,6 +1,6 @@
 # ADR 0002: Chrome MV3 capture buffer architecture — OPFS streaming with `unlimitedStorage`
 
-- **Status:** Accepted
+- **Status:** Accepted — ⚠️ **write mechanism superseded by [ADR-0003](adr-0003-async-opfs-resumable-sessions.md).** `createSyncAccessHandle()` (the sync OPFS API this ADR relies on) is **NOT available in MV3 service workers** (only in dedicated workers), so the sync write path never worked in production — the buffer silently ran in memory-fallback. ADR-0003 keeps OPFS but switches to the async API (`createWritable`).
 - **Date:** 2026-06-24
 - **Deciders:** Cristian Tala + Mavis (lead) + chrome-plugin-expert (advisor)
 - **Supersedes (partially):** the implicit decision in v1.3.2 to keep the capture buffer in SW memory unbounded.

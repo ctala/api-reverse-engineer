@@ -4,6 +4,97 @@ All notable changes to API Reverse Engineer are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-06-24 — Descargar cookies (.json) + quitar JSON array legacy
+
+### Changed
+
+- **Cookies: descargar en vez de copiar.** El botón ahora baja un `.json`
+  estructurado (`{ url, host, count, cookieHeader, cookies:[...] }`) en vez de
+  solo copiar al portapapeles — queda un asset reusable para replay (el
+  `cookieHeader` va listo para `curl -H "Cookie: …"` / Postman).
+- **Quitado el formato JSON array legacy v1.2.x.** La salida es siempre
+  JSON-Lines (el selector de formato se removió del popup y la rama json-array
+  del service worker). Una API de captura, un formato.
+
+### Docs
+
+- `PRIVACY-POLICY.md` actualizada para declarar el permiso `cookies` (+
+  `unlimitedStorage`) con su justificación: lectura read-only on-demand al
+  click, guardada localmente, nunca transmitida. (Requisito de revisión del
+  Chrome Web Store al agregar el permiso `cookies`.)
+
+## [1.6.0] — 2026-06-24 — Preset LinkedIn real + filtro arreglado + Copy Cookies + contador en vivo
+
+### Fixed
+
+- **El filtro de preset no narrowaba (capturaba TODO).** En el popup, las
+  patterns del preset se guardaban como string pero `applyPreset` las trataba
+  como array → vaciaba el filtro. Resuelto consolidando a **fuente única**:
+  el popup carga `capture-config.js` y usa sus PRESETS + parser canónicos en
+  vez de una copia desincronizada (mata B19). Las patterns del preset ya NO se
+  round-trippean por el textarea (que era el origen del bug); el textarea queda
+  para filtros extra opcionales del usuario.
+- **B10 — `x-restli-protocol-version` se redactaba** (es la constante `2.0.0`,
+  necesaria para replay). Removido de la lista de redacción del preset LinkedIn.
+- **B7 — XHR no capturaba headers.** Ahora parchea `setRequestHeader` y parsea
+  `getAllResponseHeaders()`.
+- **B8 — `fetch(new Request(...))` perdía method/headers.** Se leen del Request.
+- **URLs relativas.** Las SPAs (LinkedIn) hacen fetch con URLs relativas; se
+  resuelven a absolutas antes de filtrar/guardar.
+- **Contador del icono restaurado.** El badge muestra el conteo de requests en
+  vivo (rojo grabando / ámbar pausado), sin el parpadeo que tenía v1.4.1.
+
+### Added
+
+- **Copy Cookies.** Botón en el popup que copia las cookies de auth del sitio
+  (incluye httpOnly como `li_at` / `JSESSIONID`, que `fetch`/`document.cookie`
+  no pueden leer) vía `chrome.cookies`, para hacer replay del API. NO se guardan
+  en la captura — canal aparte. Nueva permission `cookies`.
+- **Filtro con exclusión.** `shouldCapture` acepta patterns de `exclude` (el
+  exclude gana sobre el include) para filtrar telemetría/estáticos.
+- **Preset LinkedIn actualizado a endpoints reales 2026:** `/voyager/api/`,
+  `/rsc-action/` (flagship-web RSC), `/api/graphql`; excluye `trackO11y`,
+  `sensorCollect`, `/li/track`, `static.licdn.com`, etc. Default ahora = Generic.
+- E2E nuevos (Chromium real): filtro narrowea/excluye, popup arma config desde
+  la fuente única + B10, y Copy Cookies lee httpOnly. Unit 78 + e2e 5 verde.
+
+## [1.5.0] — 2026-06-24 — La extensión vuelve a capturar + OPFS async + pausa/continuar
+
+### Fixed (regresiones que rompían la captura)
+
+- **B1 — la extensión no capturaba NADA en Chrome real.** El service worker es
+  script clásico (manifest sin `type:module`) y Chrome carga solo
+  `background.js`; los módulos `opfs-buffer`/`memory-buffer` nunca se cargaban →
+  `self.OpfsBuffer`/`MemoryBuffer` null → 0 capturas. Fix: `importScripts` en el
+  SW + rama worker faltante en el UMD de `opfs-buffer`. Los 71 tests pasaban
+  porque el mock pre-inyectaba los buffers (verde contra el mock, roto en prod).
+- **B2 — el filtro de preset descartaba toda la captura.** `content.js` corría un
+  filtro legacy `url.includes(regexCrudo)` aun con `captureConfig` estructurado.
+- **OPFS nunca funcionó en producción (ADR-0003).** `createSyncAccessHandle()` NO
+  existe en MV3 service workers → desde v1.4.0 todo corría en memoria-fallback y
+  el archivo OPFS quedaba en 0 líneas. Reescrito a la API **async**
+  (`createWritable` + `getFile`), que sí funciona en el SW. Append batcheado +
+  `flush()` para durabilidad.
+- B9 (guard `__ARE_PATCHED__` anti-doble-wrap) · B24 (versión del PING desde el manifest).
+
+### Added
+
+- **Pausa / Continuar (ADR-0003).** Verbos `PAUSE`/`RESUME` + botones en el popup.
+  La grabación sobrevive al sleep del service worker: `restoreFromExisting()` se
+  cablea en el wake del SW y reconstruye contador + dedup desde disco. `START`
+  trunca (sesión nueva); `RESUME` appendea (continúa). Badge ámbar "II" en pausa.
+- **Testing automatizado sin intervención humana.** Harness honesto que carga el
+  SW como Chrome (`test/_sw-loader.mjs` vía `node:vm`, sin pre-inyectar globals;
+  `sw-wiring.test.mjs` reproduce B1). E2E Playwright en Chromium real
+  (`record-download`, `sw-restart-resume` con CDP `stopAllWorkers`). CI en
+  `.github/workflows/test.yml`. `npm test` → 78 unit · `npm run test:e2e` → 2 e2e.
+- Subagentes en `.claude/agents/` (Chrome MV3 Engineer + API Reverse Engineer).
+
+### Changed
+
+- Descarga OPFS normalizada al shape canónico `_toJsonlLine` (igual que el path
+  de memoria). Limpieza de artifacts/drafts del repo + `.gitignore`.
+
 ## [1.4.0] — 2026-06-24 — OPFS streaming buffer (ADR-0002)
 
 ### Changed

@@ -1,0 +1,43 @@
+name: test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: version consistency (no drift)
+        run: node scripts/check-version-consistency.mjs
+      - name: unit tests (honest harness)
+        run: npm run test:unit
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install deps
+        run: npm ci || npm install
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      - name: build unpacked extension
+        run: npm run build:dist
+      # Loading an MV3 extension needs a display even with --headless=new;
+      # xvfb is the safety belt for extensions in CI.
+      - name: e2e (real Chromium + unpacked extension)
+        run: xvfb-run -a npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/

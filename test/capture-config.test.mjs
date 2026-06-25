@@ -42,51 +42,40 @@ test('PRESETS has exactly 4 entries: generic, linkedin-voyager, graphql, json-ap
   ]);
 });
 
-test('DEFAULT_PRESET_ID is linkedin-voyager', () => {
-  assert.equal(DEFAULT_PRESET_ID, 'linkedin-voyager');
+test('DEFAULT_PRESET_ID is generic', () => {
+  assert.equal(DEFAULT_PRESET_ID, 'generic');
 });
 
-test('LinkedIn Voyager preset uses the pinned anchored regex', () => {
+test('LinkedIn preset captures voyager/api + rsc-action + graphql (endpoints reales 2026)', () => {
   const preset = PRESETS['linkedin-voyager'];
-  assert.equal(preset.patterns.length, 1);
-  assert.equal(preset.patterns[0].type, 'regex');
-  // The regex source must be exactly what the reviewer checklist pinned.
-  assert.equal(
-    preset.patterns[0].value,
-    '^https:\\/\\/www\\.linkedin\\.com\\/(voyager\\/api\\/|li\\/track)'
-  );
+  assert.ok(preset.patterns.length >= 3, 'incluye los 3 endpoints de datos');
+  const inc = preset.patterns, exc = preset.exclude;
+  assert.equal(shouldCapture('https://www.linkedin.com/voyager/api/me', inc, 'OR', exc), true);
+  assert.equal(shouldCapture('https://www.linkedin.com/flagship-web/rsc-action/actions/component', inc, 'OR', exc), true);
+  assert.equal(shouldCapture('https://www.linkedin.com/voyager/api/graphql', inc, 'OR', exc), true);
+  // funciona con URL relativa (substring) — como las que dispara la SPA
+  assert.equal(shouldCapture('/voyager/api/feed/updates', inc, 'OR', exc), true);
 });
 
-test('LinkedIn Voyager regex compiles and matches voyager/api/* on www.linkedin.com', () => {
+test('LinkedIn preset EXCLUYE telemetría/estáticos (exclude gana sobre include)', () => {
   const preset = PRESETS['linkedin-voyager'];
-  assert.equal(
-    shouldCapture('https://www.linkedin.com/voyager/api/me', preset.patterns, 'OR'),
-    true
-  );
-  assert.equal(
-    shouldCapture('https://www.linkedin.com/voyager/api/feed/updates', preset.patterns, 'OR'),
-    true
-  );
-  assert.equal(
-    shouldCapture('https://www.linkedin.com/li/track?trk=foo', preset.patterns, 'OR'),
-    true
-  );
+  const inc = preset.patterns, exc = preset.exclude;
+  // static.licdn matchea el include (/voyager/api/) pero el exclude gana → fuera
+  assert.equal(shouldCapture('https://static.licdn.com/voyager/api/foo', inc, 'OR', exc), false);
+  assert.equal(shouldCapture('https://www.linkedin.com/li/track?trk=foo', inc, 'OR', exc), false);
+  // ruido que ni siquiera matchea el include → fuera
+  assert.equal(shouldCapture('https://www.linkedin.com/rest/trackO11yApi/trackO11y', inc, 'OR', exc), false);
+  // endpoint de datos legítimo sigue pasando
+  assert.equal(shouldCapture('https://www.linkedin.com/voyager/api/me', inc, 'OR', exc), true);
 });
 
-test('LinkedIn Voyager regex does NOT match static.licdn.com or px.ads.linkedin.com', () => {
-  const preset = PRESETS['linkedin-voyager'];
-  assert.equal(
-    shouldCapture('https://static.licdn.com/voyager/api/foo', preset.patterns, 'OR'),
-    false
-  );
-  assert.equal(
-    shouldCapture('https://px.ads.linkedin.com/li/track', preset.patterns, 'OR'),
-    false
-  );
-  assert.equal(
-    shouldCapture('https://www.linkedin.com/login', preset.patterns, 'OR'),
-    false
-  );
+test('shouldCapture: exclude descarta aunque el include matchee (general)', () => {
+  const inc = [{ type: 'literal', value: '/api/' }];
+  const exc = [{ type: 'literal', value: '/api/track' }];
+  assert.equal(shouldCapture('https://x.test/api/data', inc, 'OR', exc), true);
+  assert.equal(shouldCapture('https://x.test/api/track/beacon', inc, 'OR', exc), false);
+  // sin exclude el comportamiento previo se mantiene
+  assert.equal(shouldCapture('https://x.test/api/track/beacon', inc, 'OR'), true);
 });
 
 test('All presets have redact headers and body arrays (non-empty when redact enabled)', () => {

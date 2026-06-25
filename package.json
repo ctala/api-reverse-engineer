@@ -1,0 +1,20 @@
+{
+  "name": "api-reverse-engineer",
+  "version": "1.7.0",
+  "private": true,
+  "description": "Chrome MV3 extension that captures fetch + XHR requests for reverse engineering any API.",
+  "//type": "intencionalmente SIN 'type:module': src/*.js son UMD/CommonJS (module.exports) y el harness los carga vía require(). Los tests son .mjs (ESM explícito) y _chrome-mock.js se auto-detecta ESM. Forzar type:module rompe loadBackgroundFresh.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:unit": "node --test test/*.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.mjs",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test:unit && npm run test:e2e",
+    "check:version": "node scripts/check-version-consistency.mjs",
+    "build:dist": "node scripts/build-dist.mjs",
+    "pretest:e2e": "npm run build:dist"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}

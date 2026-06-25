@@ -1,4 +1,16 @@
 .DS_Store
 *.zip
+*.tar.gz
+*.tgz
 node_modules/
 .env
+
+# Build artifacts (regenerables vía scripts/build-dist.mjs)
+dist/
+
+# Drafts de proceso
+.pr-body*
+
+# Test output
+playwright-report/
+test-results/

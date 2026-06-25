@@ -139,11 +139,11 @@ Concretely, the extension **does not**:
   representations of your activity to any server.
 - Use Google Analytics, Mixpanel, Amplitude, Segment, Sentry, Bugsnag,
   Datadog, New Relic, Hotjar, FullStory, LogRocket, or any similar tool.
-- Use cookies for tracking. (The extension does not set, read, or modify
-  cookies at all. Cookies that appear in the captured traffic are
-  *content of the page's network calls*; the extension only reads them
-  through the interceptors and, in v1.3.0 with redaction enabled,
-  replaces their values before storage.)
+- Use cookies for tracking. (The extension never sets or modifies cookies.
+  Cookies that appear in captured traffic are *content of the page's network
+  calls* and are redacted by default. The opt-in **Download Cookies** button
+  reads them via `chrome.cookies` ONLY on an explicit user click and saves
+  them to a local file — that is not tracking and nothing is transmitted.)
 - Make any `fetch`, `XMLHttpRequest`, `WebSocket`, `sendBeacon`, or
   `Image().src` request to any non-`chrome://` or non-extension URL.
 - Use remote-config, feature flags, A/B test buckets, or any other
@@ -170,8 +170,9 @@ extension popup, with safe defaults.
 | **URL filter (multi-line)** | Popup textarea | empty (capture all) | One pattern per line: literal substring, glob, or `/regex/`. Combined with AND/OR. |
 | **Filter mode** | Popup radio | `OR` (matches v1.2.x behavior) | Switches between matching all patterns (AND) or any pattern (OR). |
 | **Redact secrets** | Popup checkbox | **ON** | When ON, the extension replaces values for matching header names and body keys with `[REDACTED:<key>]` placeholders, in the MAIN world, before any storage or download. When OFF, the popup shows a red warning. |
-| **Output format** | Popup radio | `JSON-Lines (recommended)` | JSON-Lines for new captures, legacy JSON array for v1.2.x-compatible tools. |
-| **File location** | Browser's standard download dialog | User-selected | `chrome.downloads.download` triggers the browser's native save dialog. The extension never writes to a fixed path. |
+| **Output format** | — | JSON-Lines | Captures download as JSON-Lines (one JSON object per line). |
+| **Download Cookies** | Popup button | n/a | On an explicit click, reads the active site's cookies (incl. httpOnly auth like `li_at`) via `chrome.cookies` and saves them to a local `.json` for API replay. Never part of a capture, never transmitted. |
+| **File location** | Browser's standard download dialog | User-selected | The browser's native save dialog. The extension never writes to a fixed path. |
 | **Clear** | Popup button | n/a | Wipes the in-memory capture buffer (`chrome.storage.session`) immediately. |
 | **Stop** | Popup button | n/a | Stops recording; buffer is preserved in `chrome.storage.session` until the user clicks Clear or closes the tab/browser. |
 | **Uninstall** | Chrome `chrome://extensions` | n/a | Removes the extension and all its storage (`chrome.storage.session`, `chrome.storage.local`). |
@@ -203,9 +204,11 @@ The extension is opinionated and bounded. The following are
 - **Requests the user makes *outside* the active recording tab** —
   recording is tab-scoped. Other tabs are not affected even if they
   match the filter.
-- **Cookies not transmitted by the page** — the extension never reads
-  `chrome.cookies` or the browser's cookie jar. It only sees cookies
-  that the page itself sends in headers.
+- **The passive capture never reads `chrome.cookies`.** The recording only
+  sees cookies the page itself sends in request headers (and redacts them by
+  default). Reading the browser's cookie jar happens ONLY via the separate,
+  opt-in **Download Cookies** button — on an explicit user click, saved to a
+  local file, never part of a capture, never transmitted.
 - **Clipboard, autofill, form data, history, bookmarks, saved
   passwords, geolocation, microphone, camera, or any other browser
   surface.** The extension declares no permission for these.
@@ -230,8 +233,10 @@ is exercised entirely on the user's device.
 | `tabs` | To read the tab id (so the download filename includes the originating tab) and to know when the user closes the tab (so we can clean up). | No. | No. |
 | `storage` | To use `chrome.storage.session` (in-memory capture buffer, captureConfig) and `chrome.storage.local` (last-used captureConfig). | No. | No. |
 | `scripting` | To inject `injected.js` into the active tab on Start. Bypasses page CSP. | No. | No. |
+| `cookies` | Powers the **Download Cookies** button. On an explicit click, the extension reads the cookies for the active tab's site (including httpOnly auth cookies such as `li_at` / `JSESSIONID`) and lets the user save them to a **local `.json` file** for replaying the site's API. Read-only, on-demand, never part of a capture, never transmitted off-device. | Yes — it can read auth cookies, but ONLY when the user clicks the button, and the result is saved locally. | No. |
+| `unlimitedStorage` | To stream large captures to the extension's OPFS (Origin Private File System) without the ~10 MB quota. The file never leaves the device. | No. | No. |
 
-The extension does **not** request `cookies`, `webRequest`,
+The extension does **not** request `webRequest`,
 `webRequestBlocking`, `debugger`, `proxy`, `vpnProvider`, `nativeMessaging`,
 `desktopCapture`, `tabCapture`, `offscreen`, `browsingData`, `history`,
 `bookmarks`, `clipboardRead`, `clipboardWrite`, `geolocation`,

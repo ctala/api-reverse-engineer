@@ -63,6 +63,25 @@
  *     only exercised in the SW context.
  */
 
+// ---------------------------------------------------------------------------
+// B1 fix (2026-06-24): the MV3 service worker is a CLASSIC script — the
+// manifest declares `service_worker` WITHOUT `type:module`, and Chrome loads
+// ONLY this file. The buffer dependencies are NOT auto-injected, so we must
+// pull them in via importScripts BEFORE the IIFE below reads self.OpfsBuffer /
+// self.MemoryBuffer. Without this, both are null and the SW captures NOTHING
+// in real Chrome (the 71-green-but-broken suite never caught it because the
+// mock pre-attached the buffers to globalThis — see test/sw-wiring.test.mjs).
+//
+//   - Production SW:        importScripts is defined → loads the deps.
+//   - Honest unit loader:   test/_sw-loader.mjs provides importScripts.
+//   - Legacy CJS harness:   importScripts is undefined (require() context) →
+//                           this is a no-op and the harness attaches the
+//                           buffers to globalThis itself (loadBackgroundFresh).
+// ---------------------------------------------------------------------------
+if (typeof importScripts === 'function') {
+  importScripts('/src/memory-buffer.js', '/src/opfs-buffer.js');
+}
+
 (function (root, factory) {
   'use strict';
   var api = factory();
@@ -99,10 +118,12 @@
   var inMemoryCount = 0;       // total events this session
   var inMemoryUnique = new Set(); // METHOD:URL dedup keys
   var isRecording = false;
+  var paused = false;            // Fase 2: PAUSED vs IDLE (resume sin truncar)
   var recordingTabId = null;
   var captureConfig = null;
   var outputFormat = 'jsonl';
   var filterMode = 'OR';
+  var sessionId = null;          // Fase 2: id de la sesión OPFS activa
 
   // OPFS streaming buffer (primary path).
   var opfsBuffer = OpfsBuffer ? OpfsBuffer.createOpfsBuffer({ filename: 'captures.jsonl' }) : null;
@@ -123,26 +144,23 @@
   // ---------------------------------------------------------------------------
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
     chrome.storage.session.get(
-      ['isRecording', 'recordingTabId', 'captureConfig', 'outputFormat', 'filterMode'],
+      ['isRecording', 'paused', 'recordingTabId', 'captureConfig', 'outputFormat', 'filterMode', 'sessionId'],
       function (data) {
-        if (data && data.isRecording) {
-          isRecording = data.isRecording;
+        if (data && (data.isRecording || data.paused)) {
+          isRecording = !!data.isRecording;
+          paused = !!data.paused;
           recordingTabId = data.recordingTabId || null;
           captureConfig = data.captureConfig || null;
           outputFormat = data.outputFormat || 'jsonl';
           filterMode = data.filterMode || 'OR';
-          // SW restart reset activeBuffer to null. Re-point it to the safe
-          // memory buffer so the first CAPTURE after restart doesn't get
-          // dropped by the `if (activeBuffer)` guard in the CAPTURE handler.
-          if (!activeBuffer && memoryBuffer) {
-            activeBuffer = memoryBuffer;
-          }
+          sessionId = data.sessionId || null;
+          // B4 fix (Fase 2 / ADR-0003): re-open the OPFS file in append mode
+          // and rebuild the counter + dedup from disk, so a recording/paused
+          // session survives the SW going idle. v1.4.2 lost the whole buffer
+          // on every SW wake-up (the file was orphaned, counters reset to 0).
+          _restoreSessionFromDisk();
           // Restore the red-dot badge so the user sees the recording state.
-          if (recordingTabId) _setBadge(recordingTabId);
-          // captured[] and counters start empty after SW restart.
-          // The OPFS file persists on disk, so on the next START we truncate
-          // it (fresh session per ADR-0002 decision). If the user wants to
-          // resume an old session, that is a F4 feature.
+          if (isRecording && recordingTabId) _setBadge(recordingTabId);
         }
       }
     );
@@ -153,14 +171,61 @@
     try {
       chrome.storage.session.set({
         isRecording: isRecording,
+        paused: paused,
         recordingTabId: recordingTabId,
         captureConfig: captureConfig,
         outputFormat: outputFormat,
-        filterMode: filterMode
+        filterMode: filterMode,
+        sessionId: sessionId
       });
     } catch (e) {
       console.error('[ARE] Failed to persist session:', e);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Re-open the persisted OPFS session after an SW restart, or to RESUME a
+  // paused session — WITHOUT truncating (ADR-0003). Rebuilds the dedup set +
+  // counter from the file (robust source of truth) and migrates any captures
+  // that arrived in the small async window while the file was being re-opened.
+  // ---------------------------------------------------------------------------
+  function _restoreSessionFromDisk() {
+    // Sync safety net: a CAPTURE arriving during the async re-open window goes
+    // to a fresh memory buffer; we migrate it to OPFS once the file re-opens.
+    if (memoryBuffer) { memoryBuffer.clear(); activeBuffer = memoryBuffer; }
+    if (!opfsBuffer) { return Promise.resolve(); }
+    return opfsBuffer.restoreFromExisting().then(function (ok) {
+      if (!ok) {
+        // No file to restore — stay on the memory buffer; next START inits fresh.
+        activeBuffer = memoryBuffer;
+        return;
+      }
+      // Rebuild dedup from the file content (readAll is async in ADR-0003).
+      return opfsBuffer.readAll().then(function (text) {
+        var lines = String(text).split('\n');
+        inMemoryUnique = new Set();
+        for (var i = 0; i < lines.length; i++) {
+          if (!lines[i]) continue;
+          try {
+            var o = JSON.parse(lines[i]);
+            var u = o.url || (o.request && o.request.url) || '';
+            var m = o.method || (o.request && o.request.method) || '';
+            inMemoryUnique.add(m + ':' + String(u).split('?')[0]);
+          } catch (e) {}
+        }
+        // Migrate captures that arrived during the re-open window.
+        var pending = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
+        activeBuffer = opfsBuffer;
+        for (var j = 0; j < pending.length; j++) {
+          opfsBuffer.append(pending[j]);
+          inMemoryUnique.add(pending[j].method + ':' + String(pending[j].url || '').split('?')[0]);
+        }
+        inMemoryCount = opfsBuffer.getCount();
+      });
+    }).catch(function (e) {
+      console.error('[ARE] restore from disk failed:', e);
+      activeBuffer = memoryBuffer;
+    });
   }
 
   // Bug fix 2026-06-24: poll the content script (ISOLATED world) until it
@@ -209,18 +274,35 @@
    * Signature: `_setBadge(tabId)`. The `count` parameter from v1.4.1
    * has been removed (it was the source of the alternating bug).
    */
+  // Badge text fits ~4 chars; counts cap at MAX_EVENTS (auto-stop), so show the
+  // exact number up to 9999 and "10k" at the cap.
+  function _fmtBadgeCount(n) {
+    n = n || 0;
+    return n >= 10000 ? '10k' : String(n);
+  }
+
   function _setBadge(tabId) {
     if (typeof chrome === 'undefined' || !chrome.action) return;
     if (!tabId) return;
+    // Restored behaviour: the toolbar icon shows the LIVE request count while
+    // recording (red) or paused (amber). The v1.4.1 bug was *alternating*
+    // between a dot and the number on every CAPTURE — here the badge always
+    // shows the count, so there's nothing to alternate with.
     if (isRecording) {
-      // While recording, show red dot. Counter goes in popup only.
       try {
-        chrome.action.setBadgeText({ text: '●', tabId: tabId });
+        chrome.action.setBadgeText({ text: _fmtBadgeCount(inMemoryCount), tabId: tabId });
         chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: tabId });
       } catch (e) {}
       return;
     }
-    // When stopped, clear badge.
+    if (paused) {
+      try {
+        chrome.action.setBadgeText({ text: _fmtBadgeCount(inMemoryCount), tabId: tabId });
+        chrome.action.setBadgeBackgroundColor({ color: '#f59e0b', tabId: tabId });
+      } catch (e) {}
+      return;
+    }
+    // Stopped/idle → clear.
     try { chrome.action.setBadgeText({ text: '', tabId: tabId }); } catch (e) {}
   }
 
@@ -234,6 +316,13 @@
       // CAPTURE
       // -----------------------------------------------------------------------
       if (msg.type === 'CAPTURE') {
+        // Drop captures when not actively recording (paused or stopped). The
+        // injected interceptor keeps dispatching events; the SW (and content
+        // script) gate on the recording state so a paused session stays clean.
+        if (!isRecording) {
+          respond({ ok: true });
+          return true;
+        }
         var tabId = sender.tab && sender.tab.id;
         if (recordingTabId !== null && tabId !== recordingTabId) {
           respond({ ok: true });
@@ -288,8 +377,9 @@
         }
 
         _persistSession();
-        // v1.4.2: badge is driven by isRecording flag (no count). No call
-        // to _setBadge here — START/STOP/AUTO_STOP own the badge.
+        // Live badge: show the running request count on the toolbar icon
+        // (restored — the user watches this while capturing).
+        _setBadge(recordingTabId);
 
         respond({ ok: true });
         return true;
@@ -304,6 +394,8 @@
         var isFallback = activeBuffer === memoryBuffer || !activeBuffer || (opfsBuffer && opfsBuffer.inFallbackMode());
         respond({
           isRecording: isRecording,
+          paused: paused,
+          recoverable: (paused || (!isRecording && inMemoryCount > 0)),
           recordingTabId: recordingTabId,
           total: inMemoryCount,
           unique: unique,
@@ -326,7 +418,11 @@
       // buffer. No duplicates in the output, no silent loss.
       // -----------------------------------------------------------------------
       if (msg.type === 'START') {
+        // START = sesión NUEVA: trunca el archivo OPFS (init). Es el único
+        // verbo (con CLEAR) que destruye datos. RESUME, en cambio, appendea.
         isRecording = true;
+        paused = false;
+        sessionId = 'sess-' + new Date().getTime();
         recordingTabId = msg.tabId || null;
         var filter = msg.filter || '';
         captureConfig = msg.captureConfig || null;
@@ -427,6 +523,7 @@
       // -----------------------------------------------------------------------
       if (msg.type === 'STOP') {
         isRecording = false;
+        paused = false;
         _persistSession();
 
         // Close the OPFS access handle (keep the file handle for download).
@@ -444,6 +541,64 @@
         if (recordingTabId) _setBadge(recordingTabId);
         recordingTabId = null;
 
+        respond({ ok: true });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // PAUSE (Fase 2) — detiene la captura SIN truncar: cierra el handle OPFS
+      // pero conserva el archivo + recordingTabId + sessionId. RESUME continúa
+      // appendeando al mismo archivo (ADR-0003). NO es STOP (que cierra la
+      // sesión) ni START (que la trunca).
+      // -----------------------------------------------------------------------
+      if (msg.type === 'PAUSE') {
+        isRecording = false;
+        paused = true;
+        if (opfsBuffer) opfsBuffer.close(); // handle cerrado, archivo intacto
+        _persistSession();
+        if (recordingTabId && typeof chrome !== 'undefined' && chrome.tabs) {
+          try {
+            chrome.tabs.sendMessage(recordingTabId, { type: 'STOP_RECORDING' }).catch(function () {});
+          } catch (e) {}
+        }
+        if (recordingTabId) _setBadge(recordingTabId);
+        respond({ ok: true });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // RESUME (Fase 2) — re-abre la sesión OPFS en modo append (NO trunca),
+      // reconstruye contador/dedup desde el archivo, y re-arma el interceptor
+      // en la pestaña (idempotente vía __ARE_PATCHED__).
+      // -----------------------------------------------------------------------
+      if (msg.type === 'RESUME') {
+        if (!paused) {
+          respond({ ok: false, error: 'No hay sesión pausada para continuar' });
+          return true;
+        }
+        isRecording = true;
+        paused = false;
+        _restoreSessionFromDisk().then(function () {
+          _persistSession();
+          if (recordingTabId && typeof chrome !== 'undefined' && chrome.scripting) {
+            chrome.scripting.executeScript({
+              target: { tabId: recordingTabId },
+              world: 'MAIN',
+              files: ['src/capture-config.js', 'src/injected.js']
+            }).then(function () {
+              return _waitForContentScript(recordingTabId, 2000);
+            }).then(function (ready) {
+              if (!ready) return;
+              chrome.tabs.sendMessage(recordingTabId, { type: 'START_RECORDING', filter: '' }).catch(function () {});
+              if (captureConfig) {
+                chrome.tabs.sendMessage(recordingTabId, { type: 'SET_CAPTURE_CONFIG', captureConfig: captureConfig }).catch(function () {});
+              }
+            }).catch(function (err) {
+              console.error('[ARE] RESUME re-inject failed:', err);
+            });
+          }
+        });
+        _setBadge(recordingTabId);
         respond({ ok: true });
         return true;
       }
@@ -474,52 +629,33 @@
           return true;
         }
 
-        if (format === 'json-array') {
-          // Legacy v1.2.3 shape — uses the in-memory array snapshot.
-          // In OPFS mode the array is empty (we can't enumerate JSONL
-          // lines back into objects cheaply), so the legacy output is
-          // a best-effort: meta + uniqueEndpoints=0 + all=[].
-          var snapshot = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
-          var unique2 = {};
-          snapshot.forEach(function (r) {
-            var k = r.method + ':' + r.url.split('?')[0];
-            if (!unique2[k] || r.isNewEndpoint) unique2[k] = r;
-          });
-          var data = {
-            meta: {
-              capturedAt: new Date().toISOString(),
-              total: inMemoryCount,
-              uniqueEndpoints: Object.keys(unique2).length,
-              site: site,
-              preset: preset
-            },
-            endpoints: Object.values(unique2),
-            all: snapshot
-          };
-          respond({
-            ok: true,
-            data: JSON.stringify(data, null, 2),
-            filename: 'api-capture-' + preset + '-' + isoStamp + '.json',
-            format: 'json-array'
-          });
-          return true;
-        }
-
-        // JSONL (v1.3.0 default) — try OPFS first if active, else serialise
+        // JSONL — try OPFS first if active, else serialise
         // the in-memory array. Always fall back to memory on any OPFS
         // failure. If both paths fail, return ok:false so the popup can
         // show the user what went wrong.
         if (activeBuffer === opfsBuffer && opfsBuffer && !opfsBuffer.inFallbackMode() && typeof opfsBuffer.getFile === 'function') {
           opfsBuffer.getFile().then(function (file) {
-            return file.arrayBuffer();
-          }).then(function (buf) {
-            // Convert to base64 so the message payload survives the
-            // structured-clone transport (ArrayBuffer is OK, but base64
-            // is portable and tested). Then in the popup we decode + Blob.
-            var bytes = new Uint8Array(buf);
-            var bin = '';
-            for (var i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
-            var b64 = (typeof btoa === 'function') ? btoa(bin) : Buffer.from(bin, 'binary').toString('base64');
+            return file.text();
+          }).then(function (text) {
+            // The OPFS file streams RAW entries at capture time. Normalize them
+            // to the canonical _toJsonlLine shape on download so the OPFS path
+            // produces the SAME output as the in-memory path (and the linkedin
+            // importer expects). Before ADR-0003 this path never ran (OPFS was
+            // always in fallback), so the inconsistency was latent.
+            var rawLines = String(text).split('\n');
+            var out = [];
+            for (var i = 0; i < rawLines.length; i++) {
+              if (!rawLines[i].trim()) continue;
+              try { out.push(_toJsonlLine(JSON.parse(rawLines[i]))); }
+              catch (e) { out.push(rawLines[i]); }
+            }
+            var raw = out.join('\n') + (out.length ? '\n' : '');
+            var b64;
+            try {
+              b64 = (typeof btoa === 'function') ? btoa(unescape(encodeURIComponent(raw))) : Buffer.from(raw, 'utf-8').toString('base64');
+            } catch (e2) {
+              b64 = Buffer.from(raw, 'utf-8').toString('base64');
+            }
             respond({
               ok: true,
               data: b64,
@@ -527,8 +663,8 @@
               mime: 'application/x-ndjson',
               filename: 'are-capture-' + preset + '-' + isoStamp + '.jsonl',
               format: 'jsonl',
-              lineCount: inMemoryCount,
-              bytes: bytes.byteLength
+              lineCount: out.length,
+              bytes: (typeof TextEncoder !== 'undefined') ? new TextEncoder().encode(raw).byteLength : raw.length
             });
           }).catch(function (e) {
             console.error('[ARE] OPFS read failed, falling back to in-memory JSONL:', e);
@@ -612,12 +748,47 @@
         respond({
           presets: [
             { id: 'generic', label: '[Generic]', sortOrder: 99 },
-            { id: 'linkedin-voyager', label: '[LinkedIn Voyager]', sortOrder: 1 },
+            { id: 'linkedin-voyager', label: '[LinkedIn]', sortOrder: 1 },
             { id: 'graphql', label: '[GraphQL]', sortOrder: 2 },
             { id: 'json-api', label: '[JSON API]', sortOrder: 3 }
           ],
-          defaultPresetId: 'linkedin-voyager'
+          defaultPresetId: 'generic'
         });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
+      // GET_COOKIES (Fase 3) — copia las cookies del sitio para replay. Usa la
+      // API chrome.cookies, que SÍ lee cookies httpOnly (li_at, JSESSIONID) que
+      // document.cookie y fetch no pueden ver. NO se guardan en la captura: es
+      // un canal aparte para que el usuario obtenga la auth.
+      // -----------------------------------------------------------------------
+      if (msg.type === 'GET_COOKIES') {
+        var cookieUrl = msg.url;
+        if (!cookieUrl || typeof chrome === 'undefined' || !chrome.cookies) {
+          respond({ ok: false, error: 'Sin URL o sin permiso cookies' });
+          return true;
+        }
+        try {
+          chrome.cookies.getAll({ url: cookieUrl }, function (cookies) {
+            if (chrome.runtime.lastError) {
+              respond({ ok: false, error: chrome.runtime.lastError.message });
+              return;
+            }
+            var list = cookies || [];
+            var header = list.map(function (c) { return c.name + '=' + c.value; }).join('; ');
+            respond({
+              ok: true,
+              count: list.length,
+              cookieHeader: header,
+              cookies: list.map(function (c) {
+                return { name: c.name, value: c.value, domain: c.domain, path: c.path, secure: c.secure, httpOnly: c.httpOnly, expirationDate: c.expirationDate };
+              })
+            });
+          });
+        } catch (e) {
+          respond({ ok: false, error: String(e && e.message || e) });
+        }
         return true;
       }
     });

@@ -181,6 +181,11 @@
       background: #ef4444;
     }
 
+    #btnPause {
+      background: #f59e0b;
+      color: #fff;
+    }
+
     #btnDownload {
       background: #3b82f6;
       color: #fff;
@@ -191,6 +196,12 @@
       color: #94a3b8;
       flex: 0 0 auto;
       padding: 9px 10px;
+    }
+
+    #btnDownloadCookies {
+      background: #1e293b;
+      color: #cbd5e1;
+      width: 100%;
     }
 
     .preview {
@@ -314,12 +325,12 @@
   </div>
 
   <div class="section">
-    <label for="filterInput">URL filter (multi-línea)</label>
+    <label for="filterInput">URL filter adicional (opcional)</label>
     <textarea
       id="filterInput"
       class="textarea"
       rows="3"
-      placeholder="Una por línea. /regex/i, *glob*, o substring literal."
+      placeholder="El preset ya filtra. Acá agregás filtros extra: una por línea (/regex/i, *glob*, o substring)."
     ></textarea>
     <div class="mode-row">
       <label><input type="radio" name="filterMode" value="AND" /> AND</label>
@@ -339,18 +350,16 @@
     </div>
   </div>
 
-  <div class="section">
-    <label>Formato de salida</label>
-    <div class="mode-row">
-      <label><input type="radio" name="outputFormat" value="jsonl" checked /> JSON-Lines (recomendado)</label>
-      <label><input type="radio" name="outputFormat" value="json-array" /> JSON array (legacy v1.2.x)</label>
-    </div>
-  </div>
-
   <div class="actions">
     <button id="btnRecord">▶ Iniciar</button>
+    <button id="btnPause" style="display:none">⏸ Pausar</button>
     <button id="btnDownload" disabled>⬇ Descargar</button>
     <button id="btnClear" title="Limpiar">🗑</button>
+  </div>
+
+  <div class="section">
+    <button id="btnDownloadCookies" type="button">⬇ Descargar cookies del sitio</button>
+    <div class="hint" id="cookiesHint">Descarga un .json con las cookies de auth (incluye httpOnly como li_at) + el header Cookie listo para replay. No se guardan en la captura.</div>
   </div>
 
   <div class="recording-indicator" id="recordingIndicator">
@@ -365,6 +374,9 @@
     </div>
   </div>
 
+  <!-- Single source of truth for presets + filter parser. Loaded before
+       popup.js so window.CaptureConfig is available. -->
+  <script src="src/capture-config.js"></script>
   <script src="src/popup.js"></script>
 </body>
 </html>
