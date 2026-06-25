@@ -29,7 +29,8 @@ const {
   parseFilter,
   shouldCapture,
   redactHeaders,
-  redactBody
+  redactBody,
+  redactUrl
 } = require('../src/capture-config.js');
 
 // ---------------------------------------------------------------------------
@@ -337,11 +338,51 @@ test('redactBody: empty keys list → passthrough', () => {
   assert.deepEqual(out, body);
 });
 
-test('redactBody: deeper-than-1 nesting leaves secrets untouched (documented limit)', () => {
-  // Defence in depth: only top + 1 level. Deeper is unchanged.
-  const body = { outer: { inner: { password: 'hunter2' } } };
+test('redactBody: deep nesting (>1 level) IS redacted (audit #13 — was a leak)', () => {
+  // Previously capped at 1 level; OAuth/session/GraphQL payloads nest deeper.
+  const body = { auth: { session: { access_token: 'eyJsecret' } } };
+  const out = redactBody(body, ['access_token']);
+  assert.equal(out.auth.session.access_token, '[REDACTED:access_token]');
+  assert.ok(!JSON.stringify(out).includes('eyJsecret'), 'deep secret value gone');
+});
+
+test('redactBody: secret inside a NESTED array is redacted (audit #3 — Voyager included[])', () => {
+  // The canonical LinkedIn Voyager shape carries tokens in included[].
+  const body = { data: { firstName: 'Test' }, included: [{ access_token: 'SHOULD_BE_REDACTED' }] };
+  const out = redactBody(body, ['access_token']);
+  assert.equal(out.included[0].access_token, '[REDACTED:access_token]');
+  assert.equal(out.data.firstName, 'Test', 'non-secret data preserved');
+  assert.ok(!JSON.stringify(out).includes('SHOULD_BE_REDACTED'), 'nested-array secret gone');
+});
+
+test('redactBody: handles cyclic objects without throwing', () => {
+  const body = { password: 'pw' };
+  body.self = body; // cycle
   const out = redactBody(body, ['password']);
-  assert.equal(out.outer.inner.password, 'hunter2');
+  assert.equal(out.password, '[REDACTED:password]');
+  assert.ok(out.self, 'cycle handled (not infinite recursion)');
+});
+
+test('redactUrl: query-string secret value is masked, path untouched (audit #2)', () => {
+  const url = 'https://www.linkedin.com/voyager/api/me?access_token=eyJsecret&count=10';
+  const out = redactUrl(url, ['access_token', 'code']);
+  assert.ok(out.startsWith('https://www.linkedin.com/voyager/api/me?'), 'path preserved');
+  assert.ok(out.includes('access_token=[REDACTED:access_token]'), 'token value masked');
+  assert.ok(out.includes('count=10'), 'non-secret param preserved');
+  assert.ok(!out.includes('eyJsecret'), 'raw token value gone');
+});
+
+test('redactUrl: OAuth token in the # fragment is masked', () => {
+  const url = 'https://app.example.com/callback#access_token=eyJsecret&state=xyz';
+  const out = redactUrl(url, ['access_token']);
+  assert.ok(out.includes('access_token=[REDACTED:access_token]'));
+  assert.ok(out.includes('state=xyz'));
+  assert.ok(!out.includes('eyJsecret'));
+});
+
+test('redactUrl: no query/fragment or empty keys → unchanged', () => {
+  assert.equal(redactUrl('https://x.com/voyager/api/me', ['access_token']), 'https://x.com/voyager/api/me');
+  assert.equal(redactUrl('https://x.com/p?access_token=abc', []), 'https://x.com/p?access_token=abc');
 });
 
 test('redactBody: never mutates input', () => {

@@ -73,6 +73,25 @@ function forwardCaptureConfigToInjected() {
 
 console.log('[ARE Content] Content script loaded');
 
+// document_start recovery (B9): the content script + MAIN-world interceptor are
+// now installed at document_start on EVERY page load. After a navigation while
+// recording (e.g. opening a LinkedIn profile), this fresh content script starts
+// with isRecording=false and would drop captures. Ask the background whether
+// THIS tab is being recorded; if so, adopt the recording state and push the
+// captureConfig to the interceptor — which flushes its load-time buffer (the
+// page-load Voyager calls) through the filter. We set isRecording BEFORE
+// forwarding so the flushed __ARE_REQUEST__ events are forwarded, not dropped.
+try {
+  chrome.runtime.sendMessage({ type: 'GET_TAB_RECORDING' }, function (res) {
+    if (chrome.runtime.lastError || !res || !res.isRecording) return;
+    isRecording = true;
+    filter = res.filter || '';
+    captureConfig = res.captureConfig || null;
+    forwardCaptureConfigToInjected();
+    console.log('[ARE Content] Adopted recording state after (re)load; config forwarded');
+  });
+} catch (e) {}
+
 // Recibir datos del injected script via window events.
 // Los entries ya vienen redactados (redacción aplicada en injected.js).
 window.addEventListener('__ARE_REQUEST__', (event) => {

@@ -4,7 +4,7 @@
 
 Built by [@ctala](https://github.com/ctala) | 🌐 [cristiantala.com](https://cristiantala.com)
 
-![Version](https://img.shields.io/badge/version-1.7.0-22c55e)
+![Version](https://img.shields.io/badge/version-1.10.0-22c55e)
 ![Manifest](https://img.shields.io/badge/manifest-v3-3b82f6)
 ![License](https://img.shields.io/badge/license-MIT-94a3b8)
 
@@ -28,7 +28,7 @@ You get a JSON-Lines file with every captured request — method, URL, request/r
 
 ## ✨ Features
 
-- **Intercepts fetch + XHR** on any website — no DevTools needed
+- **Intercepts fetch + XHR + WebSocket** on any website — no DevTools needed
 - **Tab-scoped recording** — only the active tab
 - **Live request counter** on the toolbar icon
 - **Pause / Resume** — survives the MV3 service worker sleeping, no lost captures
@@ -41,7 +41,7 @@ You get a JSON-Lines file with every captured request — method, URL, request/r
 
 Privacy: all captures stay on your device. Secrets are redacted by default. The `cookies` permission is used only when you click Download Cookies. No servers, no analytics, no tracking.
 
-**Roadmap:** see [ROADMAP.md](ROADMAP.md) — next up: **WebSocket capture** for realtime / chat protocols.
+**Roadmap:** see [ROADMAP.md](ROADMAP.md). **WebSocket capture** shipped in 1.10.0; next up: large-capture streaming download + `QuotaExceededError` handling.
 
 ---
 
@@ -76,7 +76,7 @@ Get the extension directly from the Chrome Web Store:
 ## Changelog
 
 > Full history in **[CHANGELOG.md](CHANGELOG.md)**. Highlights since v1.3.0:
-> **1.7.0** download site cookies (.json) for replay, drop legacy JSON-array · **1.6.0** real LinkedIn preset (rsc-action) + filter fix + live counter · **1.5.0** the extension captures again (importScripts fix) + async OPFS + Pause/Resume · **1.4.x** OPFS streaming buffer.
+> **1.10.0** capture fidelity (fetch(Request) body, big-int IDs, form bodies, reused XHR) + page safety (streaming no longer hangs the page) + **WebSocket capture** · **1.9.2** honest redaction (recurse arrays/deep nesting/URL params) · **1.9.1** decode blob/arraybuffer XHR bodies · **1.9.0** capture page-load API calls (document_start injection) + XHR responseType crash fix · **1.8.0** i18n (English default + Spanish) · **1.7.0** download site cookies (.json) for replay · **1.6.0** real LinkedIn preset (rsc-action) + filter fix + live counter · **1.5.0** captures again (importScripts fix) + async OPFS + Pause/Resume.
 
 ### v1.3.0 (2026-06-23) — Capture Mode
 **Added:**

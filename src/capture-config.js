@@ -85,7 +85,10 @@
       patterns: Object.freeze([
         Object.freeze({ type: 'literal', value: '/voyager/api/' }),
         Object.freeze({ type: 'literal', value: '/rsc-action/' }),
-        Object.freeze({ type: 'literal', value: '/api/graphql' })
+        Object.freeze({ type: 'literal', value: '/api/graphql' }),
+        // #20: LinkedIn realtime WebSocket (messaging/presence) lives at a
+        // 'realtime' host/path; capture its frames with the LinkedIn preset.
+        Object.freeze({ type: 'literal', value: 'realtime' })
       ]),
       // Excluir el ruido de telemetría/estáticos que no es API de datos.
       exclude: Object.freeze([
@@ -355,28 +358,61 @@
   // redactBody
   // -------------------------------------------------------------------------
 
-  function _redactObjectBody(obj, keyList, depth) {
-    var lowerKeys = keyList.map(function (k) { return String(k).toLowerCase(); });
-    var out = {};
-    var keys = Object.keys(obj);
-    for (var i = 0; i < keys.length; i++) {
-      var k = keys[i];
-      var lk = String(k).toLowerCase();
-      var match = undefined;
-      for (var j = 0; j < lowerKeys.length; j++) {
-        if (lk.indexOf(lowerKeys[j]) !== -1) { match = lowerKeys[j]; break; }
+  // Recurse fully through objects AND arrays, redacting any value whose KEY
+  // matches the list (case-insensitive substring). The old version stopped at
+  // ONE nested level and skipped arrays entirely — so a secret inside the
+  // canonical Voyager `included:[{access_token}]` shape, or nested >1 level
+  // deep, leaked through (audit findings #3/#13). Guards: MAX_REDACT_DEPTH
+  // (runaway) + a DFS `seen` stack (cycle protection — captured bodies can be
+  // self-referential). NOTE: this only runs when redact.enabled; in raw mode
+  // (toggle off) nothing here executes, so RE fidelity is untouched.
+  var MAX_REDACT_DEPTH = 24;
+
+  function _redactValue(value, lowerKeys, depth, seen) {
+    if (value === null || typeof value !== 'object') return value;
+    if (depth > MAX_REDACT_DEPTH) return value;
+    if (seen.indexOf(value) !== -1) return value; // cycle guard
+    seen.push(value);
+    var result;
+    if (Array.isArray(value)) {
+      result = [];
+      for (var i = 0; i < value.length; i++) {
+        result.push(_redactValue(value[i], lowerKeys, depth + 1, seen));
       }
-      var v = obj[k];
-      if (match !== undefined) {
-        out[k] = '[REDACTED:' + k + ']';
-      } else if (depth === 0 && v && typeof v === 'object' && !Array.isArray(v)) {
-        // One nested level — recurse but don't go further
-        out[k] = _redactObjectBody(v, keyList, depth + 1);
-      } else {
-        out[k] = v;
+    } else {
+      result = {};
+      var keys = Object.keys(value);
+      for (var n = 0; n < keys.length; n++) {
+        var k = keys[n];
+        var lk = String(k).toLowerCase();
+        var matched = false;
+        for (var j = 0; j < lowerKeys.length; j++) {
+          if (lk.indexOf(lowerKeys[j]) !== -1) { matched = true; break; }
+        }
+        result[k] = matched ? '[REDACTED:' + k + ']' : _redactValue(value[k], lowerKeys, depth + 1, seen);
       }
     }
-    return out;
+    seen.pop();
+    return result;
+  }
+
+  // Redact secret VALUES that ride in URL query/fragment params (audit #2):
+  // ?csrfToken=…, OAuth ?access_token=… / #access_token=…. The path is left
+  // intact; only param values whose key matches the list are masked.
+  function redactUrl(url, keyList) {
+    var raw = String(url == null ? '' : url);
+    var list = Array.isArray(keyList) ? keyList : [];
+    if (list.length === 0) return raw;
+    var sepIdx = raw.search(/[?#]/);
+    if (sepIdx === -1) return raw;
+    var head = raw.slice(0, sepIdx);
+    var tail = raw.slice(sepIdx); // includes the ? or #
+    for (var i = 0; i < list.length; i++) {
+      var safeKey = String(list[i]).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      var re = new RegExp('(' + safeKey + ')(=)([^&#\\s]*)', 'gi');
+      tail = tail.replace(re, function (_m, k, eq) { return k + eq + '[REDACTED:' + k + ']'; });
+    }
+    return head + tail;
   }
 
   function _redactStringBody(str, keyList) {
@@ -421,14 +457,10 @@
       return _redactStringBody(body, keyList);
     }
 
-    // Array body — redact each element recursively (one level)
-    if (Array.isArray(body)) {
-      return body.map(function (item) { return redactBody(item, keyList); });
-    }
-
-    // Object body — redact top-level + 1 nested
+    // Object OR array body — recurse fully (objects + arrays, depth/cycle-guarded)
     if (typeof body === 'object') {
-      return _redactObjectBody(body, keyList, 0);
+      var lowerKeys = keyList.map(function (k) { return String(k).toLowerCase(); });
+      return _redactValue(body, lowerKeys, 0, []);
     }
 
     return body;
@@ -440,6 +472,7 @@
     parseFilter: parseFilter,
     shouldCapture: shouldCapture,
     redactHeaders: redactHeaders,
-    redactBody: redactBody
+    redactBody: redactBody,
+    redactUrl: redactUrl
   };
 });

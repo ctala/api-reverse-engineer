@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.8.0",
+  "version": "1.10.0",
   "description": "__MSG_extDescription__",
   "default_locale": "en",
   "permissions": [
@@ -27,6 +27,18 @@
         "src/content.js"
       ],
       "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/capture-config.js",
+        "src/injected.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
       "all_frames": false
     }
   ],

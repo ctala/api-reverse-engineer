@@ -4,6 +4,143 @@ All notable changes to API Reverse Engineer are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-06-25 — Capture fidelity + page safety + WebSocket (audit batch 2)
+
+> Second wave from the adversarial edge-case audit. These are the bugs that hurt
+> reverse-engineering **even in raw mode** (redaction off): bodies that vanish,
+> IDs that get corrupted, a page that hangs. Plus WebSocket — the realtime
+> transport that was a total blind spot.
+
+### Added
+
+- **WebSocket capture (#20).** `window.WebSocket` is now proxied; outbound
+  `send()` payloads and inbound `message` frames are captured as
+  `type:'websocket'` entries (`WS_SEND` / `WS_RECV`). LinkedIn/Skool realtime
+  chat, read receipts and presence — previously invisible (fetch/XHR only) — are
+  now recorded. The `[LinkedIn]` preset gained a `realtime` pattern. e2e:
+  `websocket.spec.mjs` (real handshake + framing).
+
+### Fixed — fidelity (data we WANT, lost even in raw mode)
+
+- **#9 `fetch(new Request(url,{body}))` lost the request body** (`body:null`) —
+  the modern shape for RSC actions / GraphQL mutations, i.e. the *writes*. The
+  body is now read from a clone of the Request.
+- **#6 big-int IDs truncated.** `JSON.parse(body)` corrupts integers > 2^53
+  (LinkedIn `entityUrn`, Skool/Twitter snowflake IDs). The exact wire bytes are
+  now kept in `request.bodyRaw` for byte-exact replay.
+- **#5 `URLSearchParams`/`FormData` bodies collapsed to `{}`.** Now serialized
+  (form-encoded string / field map).
+- **#11/#12 reused XMLHttpRequest** double-captured and mis-labelled requests
+  (one `loadend` listener accumulated per `send`; shared closure vars). Fixed
+  with `{once:true}` + per-send snapshots.
+
+### Fixed — page safety (don't break the site while capturing)
+
+- **#1/#8 streaming responses hung the page.** `await cloned.text()` on a
+  `text/event-stream` / chunked body never resolves → the page's `await fetch()`
+  hung forever. The response is now returned to the page immediately and the
+  body is read from a clone in a detached, byte-capped task; SSE is skipped with
+  a placeholder. e2e: `fidelity.spec.mjs` asserts an SSE fetch resolves.
+- **#7 large responses** blocked the page + double-buffered memory — same
+  detached, capped read fixes it.
+- **#10 `response.clone()` throwing** (disturbed body from a stacked wrapper) is
+  guarded — never re-thrown into the page.
+
+### Fixed — silent-loss guards
+
+- **#16/#17 the document_start pre-recording buffer** was capped only by count
+  (200) with no byte cap (a feed could buffer tens of MB) and dropped silently.
+  Now bounded by bytes too, and a `console.warn` surfaces the drop.
+- **#19 closing the recording tab** mid-capture left the session stuck
+  "recording" forever. A `chrome.tabs.onRemoved` listener now does an implicit
+  STOP.
+
+### Known / deferred (low probability, noted not silent)
+
+- **#4 OPFS quota exhaustion** mid-write (infinite retry) — bounded in practice
+  by the 10k-event auto-stop + 5 MB/body cap; a `QuotaExceededError` guard is a
+  follow-up. **#18** large-capture download memory, **#15** fallback-buffer
+  eviction signal, **#14** value-side header redaction — tracked for a later
+  pass.
+
+## [1.9.2] — 2026-06-25 — Honest redaction (recurse arrays + deep nesting + URL params)
+
+> Redaction is a **"safe to share"** feature, not self-protection — for your own
+> reverse-engineering on your own account/machine, turn **Redact secrets OFF**
+> for full-fidelity, replay-ready captures. These fixes make the ON mode honest
+> (no false sense of safety) for the moments a capture leaves your machine.
+
+### Fixed (from the adversarial edge-case audit)
+
+- **#3 — secret inside a nested array leaked.** Redaction recursed only one
+  level and skipped arrays entirely, so a token in the canonical Voyager
+  `included:[{access_token}]` shape passed through verbatim. Redaction now
+  recurses fully through objects AND arrays (depth + cycle guarded).
+- **#13 — secret nested >1 level leaked.** Same root cause; deep OAuth/session
+  payloads are now redacted at any depth.
+- **#2 — secret in a URL query/fragment param leaked.** The captured URL was
+  never redacted, so `?access_token=…` / `#access_token=…` rode through raw. New
+  `redactUrl()` masks matching param values; the path is left intact.
+
+### Tests
+
+- `capture-config.test.mjs` — nested-array, deep-nesting, cyclic-object, and
+  `redactUrl` (query + fragment) cases. The old test that asserted deep secrets
+  *leak* (documented limit) is flipped to assert they are redacted.
+- `record-download.spec.mjs` now asserts the `included[]` `access_token` is gone
+  end-to-end (the fixture seeded it; nothing asserted it before).
+
+## [1.9.1] — 2026-06-25 — Decode blob/arraybuffer XHR bodies (don't skip them)
+
+### Fixed
+
+- **`responseType='blob'` bodies were dropped.** 1.9.0's crash fix guarded
+  `responseText` but stored a `_skipped` placeholder for every non-text body —
+  and LinkedIn serves Voyager JSON over `responseType='blob'`, so a real capture
+  got the request URLs + queryIds but **lost every response body** (37/86 in a
+  live capture). The interceptor now DECODES instead of skipping: `arraybuffer`
+  via `TextDecoder` (sync), `blob` via `blob.text()` (async — reading does not
+  consume the blob, so the page's own handlers are unaffected), `json` via the
+  parsed `.response`. Only `document` (can't carry JSON) degrades to a typed
+  placeholder. The XHR loadend handler now never throws into the page.
+
+### Tests
+
+- `test/e2e/responsetype-matrix.spec.mjs` — fires one JSON endpoint with all six
+  responseType values (`'' | text | json | blob | arraybuffer | document`) and
+  asserts zero page errors + decoded bodies for the readable ones. Exhausts the
+  finite enum so a missed value can't regress silently.
+
+## [1.9.0] — 2026-06-25 — Capture page-load API calls (document_start) + XHR responseType crash fix
+
+### Fixed
+
+- **XHR `responseType` crash (`InvalidStateError`).** The interceptor read
+  `xhr.responseText` unconditionally; for `responseType` `blob` / `arraybuffer`
+  / `document` (LinkedIn uses these) that THROWS, and the old `catch` re-read it
+  outside a `try` → an Uncaught `InvalidStateError` on every non-text XHR (seen
+  on linkedin.com/notifications, `injected.js:245`). Now guards on
+  `responseType`: reads `responseText` only for `''`/`text`, uses the parsed
+  `.response` for `json`, and stores a typed placeholder for binary. Regression:
+  `test/e2e/blob-xhr-responsetype.spec.mjs` (fails on the old code).
+
+### Added
+
+- **Page-load capture via `document_start` injection (B9).** The MAIN-world
+  interceptor is now installed declaratively at `document_start` on every page,
+  so it patches `fetch`/`XHR` BEFORE the page fires its load-time calls. SPAs
+  like LinkedIn fire their data calls (Voyager graphql, RSC/SDUI actions) on
+  navigation / page-load — previously the interceptor was injected only at
+  record-time and missed them entirely (real captures showed 0 Voyager calls,
+  only post-injection telemetry). After a navigation while recording, the fresh
+  content script re-adopts the recording state (`GET_TAB_RECORDING`) and the
+  interceptor flushes its load-time buffer through the filter + redaction.
+  Regression: `test/e2e/page-load-capture.spec.mjs` (fails without the
+  declarative MAIN injection).
+- The interceptor buffers raw entries in MAIN world until the capture config
+  arrives, then flushes them filtered + **redacted** — load-time secrets never
+  cross the bridge raw (the page-load test asserts the csrf-token is masked).
+
 ## [1.8.0] — 2026-06-24 — i18n (English default + Spanish)
 
 ### Added

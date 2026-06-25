@@ -91,6 +91,19 @@ test('B1+B2 — la extensión real captura fetch+XHR y el JSONL descargado los c
     const lines = jsonl.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
     const me = lines.find((l) => l.request && l.request.url && l.request.url.includes('/voyager/api/me'));
     expect(me, 'el endpoint /voyager/api/me debe estar capturado (B1 cableado + B2 filtro)').toBeTruthy();
+
+    // audit #3: the access_token nested in the Voyager included[] array must be
+    // redacted — the fixture seeds 'SHOULD_BE_REDACTED' there and recursion into
+    // arrays is what catches it.
+    expect(JSON.stringify(me).includes('SHOULD_BE_REDACTED'),
+      'el access_token en included[] NO debe filtrarse (redacción recursiva en arrays)').toBe(false);
+
+    // audit #9: fireRequests() POSTs via fetch(new Request(url,{body})). The
+    // body lives on the Request; it must be captured, not lost as null.
+    const mePost = lines.find((l) => l.request && l.request.method === 'POST' && l.request.url.includes('/voyager/api/me'));
+    expect(mePost, 'el POST fetch(Request) a /voyager/api/me debe capturarse').toBeTruthy();
+    expect(mePost.request.body && mePost.request.body.hello,
+      'el body del fetch(Request) NO debe perderse (#9 → era body:null)').toBe('world');
   } finally {
     await fixtures.close();
     await ctx.close();

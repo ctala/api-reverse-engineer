@@ -410,6 +410,25 @@ if (typeof importScripts === 'function') {
       }
 
       // -----------------------------------------------------------------------
+      // GET_TAB_RECORDING (B9 / document_start) — a freshly-loaded content
+      // script (after a navigation while recording) asks whether ITS tab is the
+      // one being recorded, so it can adopt the recording state, receive the
+      // captureConfig, and trigger the interceptor to flush its load-time
+      // buffer. Scoped to the sender tab: only the recording tab gets a positive
+      // answer + the config — other tabs get isRecording:false and no config.
+      // -----------------------------------------------------------------------
+      if (msg.type === 'GET_TAB_RECORDING') {
+        var senderTabId = sender.tab && sender.tab.id;
+        var isRec = isRecording && senderTabId != null && senderTabId === recordingTabId;
+        respond({
+          isRecording: isRec,
+          captureConfig: isRec ? captureConfig : null,
+          filter: ''
+        });
+        return true;
+      }
+
+      // -----------------------------------------------------------------------
       // START
       // v1.4.2: activeBuffer is memoryBuffer SYNCHRONOUSLY (was: null until
       // the async OPFS init resolved, dropping every CAPTURE in the init
@@ -794,6 +813,24 @@ if (typeof importScripts === 'function') {
     });
   }
 
+  // #19: if the recording tab is closed (or crashes) mid-capture, treat it as an
+  // implicit STOP. Without this, isRecording/recordingTabId stayed set forever —
+  // a stuck "recording" state, a never-cleared badge, and (if Chrome reused the
+  // integer tabId) captures from a NEW tab mis-attributed to the dead session.
+  if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onRemoved) {
+    chrome.tabs.onRemoved.addListener(function (closedTabId) {
+      if ((isRecording || paused) && closedTabId === recordingTabId) {
+        isRecording = false;
+        paused = false;
+        if (opfsBuffer) { try { opfsBuffer.close(); } catch (e) {} }
+        try { if (recordingTabId) _setBadge(recordingTabId); } catch (e) {}
+        recordingTabId = null;
+        _persistSession();
+        console.log('[ARE] Recording tab closed — session stopped automatically.');
+      }
+    });
+  }
+
   function _buildJsonlFromMemory(preset, isoStamp) {
     var snapshot = (memoryBuffer && memoryBuffer.snapshot) ? memoryBuffer.snapshot() : [];
     var lines = snapshot.map(function (e) { return _toJsonlLine(e); });
@@ -887,6 +924,11 @@ if (typeof importScripts === 'function') {
       duration_ms: entry.duration
     };
     if (entry.error) line.error = entry.error;
+    // #6: byte-exact request body string (preserves big-int IDs the parsed
+    // object would truncate). Only present when it adds fidelity.
+    if (entry.requestBodyRaw !== undefined && entry.requestBodyRaw !== null) {
+      line.request.bodyRaw = entry.requestBodyRaw;
+    }
     return JSON.stringify(line);
   }
 
