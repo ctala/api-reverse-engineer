@@ -1,17 +1,35 @@
 /**
- * API Reverse Engineer — Popup Logic (v1.3.0)
+ * API Reverse Engineer — Popup Logic
  *
- * Capture Mode: 4 new inputs wired here:
- *   - presetSelect (dropdown) — switches the active preset; updates filter +
- *     redact defaults to the preset's defaults.
- *   - filterInput (textarea) — multi-line filter (literal / regex /glob).
- *   - redactToggle (checkbox) — redact secrets ON/OFF.
- *   - outputFormat radios (jsonl / json-array).
+ * UI strings are internationalized via chrome.i18n + _locales/{en,es} (English
+ * is the default_locale; the popup follows the browser UI language). Static text
+ * uses data-i18n / data-i18n-placeholder / data-i18n-title attributes resolved
+ * by applyI18n(); dynamic strings call i18n(key, subs).
  *
- * The popup never bundles the helper functions; the background.js owns them
- * (via src/capture-config.js) and the popup just sends the chosen
- * captureConfig as a plain object.
+ * The popup does not bundle the capture helpers: capture-config.js (loaded by
+ * popup.html before this script) is the single source of truth for presets and
+ * the filter parser; the popup just sends the chosen captureConfig as a plain
+ * object.
  */
+
+// --- i18n ---
+function i18n(key, subs) {
+  try { return chrome.i18n.getMessage(key, subs) || key; } catch (e) { return key; }
+}
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const m = i18n(el.getAttribute('data-i18n'));
+    if (m) el.textContent = m;
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+    const m = i18n(el.getAttribute('data-i18n-placeholder'));
+    if (m) el.setAttribute('placeholder', m);
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+    const m = i18n(el.getAttribute('data-i18n-title'));
+    if (m) el.setAttribute('title', m);
+  });
+}
 
 const btnRecord = document.getElementById('btnRecord');
 const btnPause = document.getElementById('btnPause');
@@ -94,20 +112,20 @@ function populatePresetDropdown() {
 
 function updateRedactHint() {
   if (redactToggle.checked) {
-    redactHint.textContent = 'Se redactan cookies, CSRF, y campos comunes antes de guardar.';
+    redactHint.textContent = i18n('redactHintOn');
     redactHint.style.color = '';
     redactRow.classList.remove('warning');
   } else {
-    redactHint.textContent = 'Captures may include `li_at`, `JSESSIONID`, and other auth tokens. Do not commit these.';
+    redactHint.textContent = i18n('redactHintOff');
     redactHint.style.color = '#f87171';
     redactRow.classList.add('warning');
   }
 }
 
-// Cargar estado al abrir popup
+// Load state when the popup opens.
 function loadState() {
   chrome.runtime.sendMessage({ type: 'GET_STATE' }, (res) => {
-    if (chrome.runtime.lastError || !res) return; // B6: guard contra SW dormido
+    if (chrome.runtime.lastError || !res) return; // B6: guard against a sleeping SW
     isRecording = res.isRecording;
     paused = res.paused;
     updateUI(res.total, res.unique);
@@ -136,35 +154,35 @@ function updateUI(total, unique) {
   totalCount.textContent = total || 0;
   uniqueCount.textContent = unique || 0;
 
-  // Tres estados (Fase 2): IDLE · RECORDING · PAUSED.
+  // Three states (Phase 2): IDLE · RECORDING · PAUSED.
   if (isRecording) {
-    btnRecord.textContent = '⏹ Detener';
+    btnRecord.textContent = i18n('btnStop');
     btnRecord.classList.add('recording');
     btnPause.style.display = '';
-    btnPause.textContent = '⏸ Pausar';
+    btnPause.textContent = i18n('btnPause');
     recordingIndicator.classList.add('active');
   } else if (paused) {
-    btnRecord.textContent = '⏹ Detener';
+    btnRecord.textContent = i18n('btnStop');
     btnRecord.classList.add('recording');
     btnPause.style.display = '';
-    btnPause.textContent = '▶ Continuar';
+    btnPause.textContent = i18n('btnResume');
     recordingIndicator.classList.remove('active');
   } else {
-    btnRecord.textContent = '▶ Iniciar';
+    btnRecord.textContent = i18n('btnStart');
     btnRecord.classList.remove('recording');
     btnPause.style.display = 'none';
     recordingIndicator.classList.remove('recording');
     recordingIndicator.classList.remove('active');
   }
 
-  // En modo OPFS no se descarga "en caliente"; permitimos descargar si hay
-  // datos (total > 0), incluso pausado.
+  // In OPFS mode there's no hot download; allow downloading whenever there is
+  // data (total > 0), even while paused.
   btnDownload.disabled = (total === 0);
 }
 
 function renderEndpoints(endpoints) {
   if (!endpoints || endpoints.length === 0) {
-    endpointList.innerHTML = '<div class="empty-state">Presiona Iniciar y usa el sitio normalmente</div>';
+    endpointList.innerHTML = '<div class="empty-state">' + i18n('emptyState') + '</div>';
     return;
   }
 
@@ -186,16 +204,17 @@ function renderEndpoints(endpoints) {
 
 function maybeShowPausedBanner(state) {
   if (state && state.paused) {
-    endpointList.innerHTML = '<div class="empty-state">⏸ Sesión pausada · <strong style="color:#f59e0b">' +
-      (state.total || 0) + '</strong> eventos<br>Continuar para seguir capturando</div>';
+    endpointList.innerHTML = '<div class="empty-state">⏸ ' + i18n('sessionPaused') +
+      ' · <strong style="color:#f59e0b">' + (state.total || 0) + '</strong> ' + i18n('eventsLabel') +
+      '<br>' + i18n('resumeToKeepCapturing') + '</div>';
   }
 }
 
 function refreshPreview() {
   chrome.runtime.sendMessage({ type: 'GET_PREVIEW' }, (res) => {
     if (chrome.runtime.lastError || !res) return;
-    // B13: en modo OPFS el preview viene vacío POR DISEÑO ([] + opfsMode). No
-    // pisar el mensaje "Grabando…/Pausado" con el empty-state de "Iniciar".
+    // B13: in OPFS mode the preview is empty BY DESIGN ([] + opfsMode). Don't
+    // overwrite the "Recording…/Paused" message with the idle empty-state.
     if (res.opfsMode) return;
     if (res.endpoints) renderEndpoints(res.endpoints);
   });
@@ -232,7 +251,7 @@ document.querySelectorAll('input[name="filterMode"]').forEach((r) => {
   });
 });
 
-// Botón Record / Stop
+// Record / Stop button.
 btnRecord.addEventListener('click', async () => {
   if (!isRecording) {
     const filter = filterInput.value.trim();
@@ -261,8 +280,9 @@ btnRecord.addEventListener('click', async () => {
       updateUI(0, 0);
       const hostname = tab && tab.url
         ? (() => { try { return new URL(tab.url).hostname; } catch (e) { return tab.url; } })()
-        : 'tab actual';
-      endpointList.innerHTML = `<div class="empty-state">Grabando en <strong style="color:#22c55e">${hostname}</strong><br>Usa el sitio normalmente</div>`;
+        : i18n('currentTabFallback');
+      endpointList.innerHTML = '<div class="empty-state">' + i18n('recordingOn') +
+        ' <strong style="color:#22c55e">' + hostname + '</strong><br>' + i18n('useSiteNormally') + '</div>';
     });
   } else {
     chrome.runtime.sendMessage({ type: 'STOP' }, () => {
@@ -274,8 +294,8 @@ btnRecord.addEventListener('click', async () => {
   }
 });
 
-// Botón Pausar / Continuar (Fase 2). Visible solo cuando hay sesión activa
-// o pausada. PAUSE conserva el archivo OPFS; RESUME continúa appendeando.
+// Pause / Resume button (Phase 2). Visible only when a session is active or
+// paused. PAUSE keeps the OPFS file; RESUME continues appending.
 btnPause.addEventListener('click', () => {
   if (isRecording) {
     chrome.runtime.sendMessage({ type: 'PAUSE' }, () => {
@@ -297,7 +317,7 @@ btnPause.addEventListener('click', () => {
   }
 });
 
-// Botón Descargar
+// Download button.
 btnDownload.addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const site = (tab && tab.url) ? new URL(tab.url).hostname : 'unknown';
@@ -309,10 +329,9 @@ btnDownload.addEventListener('click', async () => {
       return;
     }
     if (res.ok === false) {
-      // Bug fix 2026-06-24: SW returns {ok:false, error: '...'} on empty
-      // or failed downloads. Show the user what went wrong.
+      // The SW returns {ok:false, error: '...'} on empty or failed downloads.
       console.warn('[ARE Popup] Download refused:', res.error);
-      alert('No se puede descargar: ' + (res.error || 'unknown error'));
+      alert(i18n('downloadError', [res.error || 'unknown error']));
       return;
     }
     if (!res.data) {
@@ -320,9 +339,9 @@ btnDownload.addEventListener('click', async () => {
       return;
     }
 
-    // Bug fix 2026-06-24: SW returns binary data base64-encoded since v1.4.0
-    // (raw text transport can't survive large buffers in the structured-
-    // clone message protocol). Decode here if encoding === 'base64'.
+    // The SW returns binary data base64-encoded (raw text transport can't
+    // survive large buffers in the structured-clone message protocol). Decode
+    // here if encoding === 'base64'.
     var bytes;
     if (res.encoding === 'base64') {
       try {
@@ -336,7 +355,7 @@ btnDownload.addEventListener('click', async () => {
         return;
       }
     } else {
-      // Legacy v1.3.x path: SW sent raw string. Wrap as Uint8Array for Blob.
+      // Legacy path: SW sent a raw string. Wrap as Uint8Array for the Blob.
       bytes = new TextEncoder().encode(res.data);
     }
 
@@ -350,18 +369,18 @@ btnDownload.addEventListener('click', async () => {
   });
 });
 
-// Botón Limpiar
+// Clear button.
 btnClear.addEventListener('click', () => {
-  if (!confirm('¿Limpiar todos los datos capturados?')) return;
+  if (!confirm(i18n('confirmClearData'))) return;
   chrome.runtime.sendMessage({ type: 'CLEAR' }, () => {
     updateUI(0, 0);
-    endpointList.innerHTML = '<div class="empty-state">Presiona Iniciar y usa el sitio normalmente</div>';
+    endpointList.innerHTML = '<div class="empty-state">' + i18n('emptyState') + '</div>';
   });
 });
 
-// Botón Descargar cookies (Fase 3) — baja un .json con la auth del sitio
-// (incluye httpOnly como li_at / JSESSIONID, que fetch no puede leer) vía
-// chrome.cookies, para replay. NO se guarda en la captura: es un canal aparte.
+// Download cookies button (Phase 3) — downloads a .json with the site's auth
+// cookies (incl. httpOnly like li_at / JSESSIONID, which fetch can't read) via
+// chrome.cookies, for API replay. Never part of a capture: a separate channel.
 const btnDownloadCookies = document.getElementById('btnDownloadCookies');
 const cookiesHint = document.getElementById('cookiesHint');
 function setCookiesHint(msg, isError) {
@@ -375,12 +394,13 @@ if (btnDownloadCookies) {
     try { [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); } catch (e) {}
     const url = tab && tab.url;
     if (!url || /^chrome(-extension)?:\/\//.test(url)) {
-      setCookiesHint('Abrí el sitio del que querés las cookies en la pestaña activa.', true);
+      setCookiesHint(i18n('cookiesOpenSite'), true);
       return;
     }
     chrome.runtime.sendMessage({ type: 'GET_COOKIES', url }, (res) => {
       if (chrome.runtime.lastError || !res || res.ok === false) {
-        setCookiesHint('Error: ' + ((res && res.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'desconocido'), true);
+        const reason = (res && res.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || i18n('cookiesUnknownError');
+        setCookiesHint(i18n('cookiesError', [reason]), true);
         return;
       }
       let host = 'site';
@@ -390,7 +410,7 @@ if (btnDownloadCookies) {
         url: url,
         host: host,
         count: res.count || 0,
-        // Header listo para curl/Postman: -H "Cookie: <cookieHeader>"
+        // Header ready for curl/Postman: -H "Cookie: <cookieHeader>"
         cookieHeader: res.cookieHeader || '',
         cookies: res.cookies || []
       };
@@ -401,22 +421,20 @@ if (btnDownloadCookies) {
       a.download = 'cookies-' + host + '-' + Date.now() + '.json';
       a.click();
       URL.revokeObjectURL(dlUrl);
-      setCookiesHint('✓ ' + (res.count || 0) + ' cookies descargadas (.json con header Cookie para replay).');
+      setCookiesHint(i18n('cookiesDownloaded', [String(res.count || 0)]));
     });
   });
 }
 
-// Auto-refresh mientras está grabando
-// Bug fix 2026-06-24: also poll the state itself (not just preview when
-// isRecording=true), so we recover from initial GET_STATE race / SW wake
-// delay. Without this, the popup could show 'Iniciar' even when background
-// is actively recording (because isRecording stays false module-level until
-// GET_STATE returns — and the previous polling did nothing when it was false).
+// Auto-refresh while recording. Also poll the state itself (not only the
+// preview when isRecording=true) so we recover from the initial GET_STATE race
+// / SW wake delay — otherwise the popup could show 'Start' while the background
+// is actively recording (isRecording stays false module-level until GET_STATE
+// returns).
 setInterval(() => {
   if (isRecording || paused) {
     refreshPreview();
   } else {
-    // Re-fetch state — if SW is now awake and recording/paused, flips the UI.
     chrome.runtime.sendMessage({ type: 'GET_STATE' }, (res) => {
       if (chrome.runtime.lastError || !res) return;
       isRecording = res.isRecording;
@@ -427,5 +445,6 @@ setInterval(() => {
   }
 }, 1500);
 
-// Iniciar
+// Init.
+applyI18n();
 loadState();

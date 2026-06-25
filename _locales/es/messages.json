@@ -1,0 +1,46 @@
+{
+  "extName": { "message": "API Reverse Engineer" },
+  "extDescription": { "message": "Captura cada llamada API (fetch + XHR) mientras navegas. Graba → usa el sitio → descarga JSONL." },
+  "popupSubtitle": { "message": "Captura requests en cualquier sitio" },
+  "statRequests": { "message": "Requests" },
+  "statUnique": { "message": "Únicos" },
+  "presetLabel": { "message": "Preset" },
+  "filterLabel": { "message": "Filtro de URL adicional (opcional)" },
+  "filterPlaceholder": { "message": "El preset ya filtra. Agrega filtros extra aquí, uno por línea (/regex/i, *glob*, o substring)." },
+  "redactLabel": { "message": "Ocultar secretos" },
+  "redactRecommended": { "message": "(recomendado)" },
+  "redactHintOn": { "message": "Se ocultan cookies, CSRF y campos comunes antes de guardar." },
+  "redactHintOff": { "message": "Las capturas pueden incluir li_at, JSESSIONID y otros tokens de auth. No los subas a git." },
+  "btnStart": { "message": "▶ Iniciar" },
+  "btnStop": { "message": "⏹ Detener" },
+  "btnPause": { "message": "⏸ Pausar" },
+  "btnResume": { "message": "▶ Continuar" },
+  "btnDownload": { "message": "⬇ Descargar" },
+  "btnClearTitle": { "message": "Limpiar" },
+  "btnDownloadCookies": { "message": "⬇ Descargar cookies del sitio" },
+  "cookiesHintDefault": { "message": "Descarga un .json con las cookies de auth del sitio (incl. httpOnly como li_at) + el header Cookie listo para replay. No se guardan en la captura." },
+  "recordingIndicator": { "message": "Grabando..." },
+  "endpointsCapturedTitle": { "message": "Endpoints capturados" },
+  "emptyState": { "message": "Presiona Iniciar y usa el sitio normalmente" },
+  "recordingOn": { "message": "Grabando en" },
+  "useSiteNormally": { "message": "Usa el sitio normalmente" },
+  "currentTabFallback": { "message": "pestaña actual" },
+  "sessionPaused": { "message": "Sesión pausada" },
+  "eventsLabel": { "message": "eventos" },
+  "resumeToKeepCapturing": { "message": "Continúa para seguir capturando" },
+  "confirmClearData": { "message": "¿Limpiar todos los datos capturados?" },
+  "cookiesOpenSite": { "message": "Abre en la pestaña activa el sitio del que quieres las cookies." },
+  "cookiesError": {
+    "message": "Error: $msg$",
+    "placeholders": { "msg": { "content": "$1" } }
+  },
+  "cookiesUnknownError": { "message": "desconocido" },
+  "cookiesDownloaded": {
+    "message": "✓ $count$ cookies descargadas (.json con header Cookie para replay).",
+    "placeholders": { "count": { "content": "$1" } }
+  },
+  "downloadError": {
+    "message": "No se puede descargar: $error$",
+    "placeholders": { "error": { "content": "$1" } }
+  }
+}

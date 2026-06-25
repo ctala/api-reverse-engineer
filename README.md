@@ -36,6 +36,7 @@ You get a JSON-Lines file with every captured request — method, URL, request/r
 - **Secret redaction ON by default** — cookies, CSRF, and auth tokens masked before saving
 - **Download site cookies** (incl. httpOnly) for API replay
 - **Streams to disk (OPFS)** — handles long, large capture sessions
+- **English + Spanish UI** — follows your browser language (`chrome.i18n`)
 - **Clean dark UI · Manifest V3**
 
 Privacy: all captures stay on your device. Secrets are redacted by default. The `cookies` permission is used only when you click Download Cookies. No servers, no analytics, no tracking.

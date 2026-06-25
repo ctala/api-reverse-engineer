@@ -4,6 +4,21 @@ All notable changes to API Reverse Engineer are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-06-24 — i18n (English default + Spanish)
+
+### Added
+
+- **Internationalized popup UI via `chrome.i18n`** (`_locales/en` + `_locales/es`),
+  with English as the `default_locale`. The popup follows the browser's UI
+  language — English by default, Spanish for `es` locales. Absorbs and credits
+  the i18n proposal from **@adc103 (#1)**, re-implemented on the current popup
+  (the original PR predated the 1.5–1.7 rewrite and no longer applied).
+- `manifest.json` `name` / `description` localized via `__MSG_*__`.
+
+### Changed
+
+- `build:dist` now bundles `_locales/`.
+
 ## [1.7.0] — 2026-06-24 — Descargar cookies (.json) + quitar JSON array legacy
 
 ### Changed

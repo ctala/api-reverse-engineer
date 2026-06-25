@@ -1,0 +1,46 @@
+{
+  "extName": { "message": "API Reverse Engineer" },
+  "extDescription": { "message": "Capture every API call (fetch + XHR) as you browse. Record → use the site → download JSONL." },
+  "popupSubtitle": { "message": "Capture requests on any site" },
+  "statRequests": { "message": "Requests" },
+  "statUnique": { "message": "Unique" },
+  "presetLabel": { "message": "Preset" },
+  "filterLabel": { "message": "Additional URL filter (optional)" },
+  "filterPlaceholder": { "message": "The preset already filters. Add extra filters here, one per line (/regex/i, *glob*, or substring)." },
+  "redactLabel": { "message": "Redact secrets" },
+  "redactRecommended": { "message": "(recommended)" },
+  "redactHintOn": { "message": "Cookies, CSRF, and common fields are redacted before saving." },
+  "redactHintOff": { "message": "Captures may include li_at, JSESSIONID, and other auth tokens. Do not commit these." },
+  "btnStart": { "message": "▶ Start" },
+  "btnStop": { "message": "⏹ Stop" },
+  "btnPause": { "message": "⏸ Pause" },
+  "btnResume": { "message": "▶ Resume" },
+  "btnDownload": { "message": "⬇ Download" },
+  "btnClearTitle": { "message": "Clear" },
+  "btnDownloadCookies": { "message": "⬇ Download site cookies" },
+  "cookiesHintDefault": { "message": "Downloads a .json with the site's auth cookies (incl. httpOnly like li_at) + the Cookie header ready for replay. Never saved in the capture." },
+  "recordingIndicator": { "message": "Recording..." },
+  "endpointsCapturedTitle": { "message": "Captured endpoints" },
+  "emptyState": { "message": "Press Start and use the site normally" },
+  "recordingOn": { "message": "Recording on" },
+  "useSiteNormally": { "message": "Use the site normally" },
+  "currentTabFallback": { "message": "current tab" },
+  "sessionPaused": { "message": "Session paused" },
+  "eventsLabel": { "message": "events" },
+  "resumeToKeepCapturing": { "message": "Resume to keep capturing" },
+  "confirmClearData": { "message": "Clear all captured data?" },
+  "cookiesOpenSite": { "message": "Open the site you want cookies from in the active tab." },
+  "cookiesError": {
+    "message": "Error: $msg$",
+    "placeholders": { "msg": { "content": "$1" } }
+  },
+  "cookiesUnknownError": { "message": "unknown" },
+  "cookiesDownloaded": {
+    "message": "✓ $count$ cookies downloaded (.json with Cookie header for replay).",
+    "placeholders": { "count": { "content": "$1" } }
+  },
+  "downloadError": {
+    "message": "Cannot download: $error$",
+    "placeholders": { "error": { "content": "$1" } }
+  }
+}

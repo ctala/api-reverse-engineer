@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -300,37 +300,38 @@
 <body>
   <div class="header">
     <h1>🔬 API Reverse Engineer</h1>
-    <div class="subtitle">Captura requests en cualquier sitio</div>
+    <div class="subtitle" data-i18n="popupSubtitle">Capture requests on any site</div>
   </div>
 
   <div class="stats">
     <div class="stat">
       <div class="stat-value" id="totalCount">0</div>
-      <div class="stat-label">Requests</div>
+      <div class="stat-label" data-i18n="statRequests">Requests</div>
     </div>
     <div class="stat">
       <div class="stat-value" id="uniqueCount">0</div>
-      <div class="stat-label">Únicos</div>
+      <div class="stat-label" data-i18n="statUnique">Unique</div>
     </div>
   </div>
 
   <div class="section">
-    <label for="presetSelect">Preset</label>
+    <label for="presetSelect" data-i18n="presetLabel">Preset</label>
     <select id="presetSelect" class="preset-select">
       <option value="generic">[Generic]</option>
-      <option value="linkedin-voyager">[LinkedIn Voyager]</option>
+      <option value="linkedin-voyager">[LinkedIn]</option>
       <option value="graphql">[GraphQL]</option>
       <option value="json-api">[JSON API]</option>
     </select>
   </div>
 
   <div class="section">
-    <label for="filterInput">URL filter adicional (opcional)</label>
+    <label for="filterInput" data-i18n="filterLabel">Additional URL filter (optional)</label>
     <textarea
       id="filterInput"
       class="textarea"
       rows="3"
-      placeholder="El preset ya filtra. Acá agregás filtros extra: una por línea (/regex/i, *glob*, o substring)."
+      data-i18n-placeholder="filterPlaceholder"
+      placeholder="The preset already filters. Add extra filters here, one per line (/regex/i, *glob*, or substring)."
     ></textarea>
     <div class="mode-row">
       <label><input type="radio" name="filterMode" value="AND" /> AND</label>
@@ -343,34 +344,34 @@
       <input type="checkbox" id="redactToggle" checked />
       <div>
         <label for="redactToggle" style="display:inline; margin:0; color:#e2e8f0; font-size:12px;">
-          Redact secrets <span style="color:#64748b; font-weight:400;">(recommended)</span>
+          <span data-i18n="redactLabel">Redact secrets</span> <span style="color:#64748b; font-weight:400;" data-i18n="redactRecommended">(recommended)</span>
         </label>
-        <div class="hint" id="redactHint">Se redactan cookies, CSRF, y campos comunes antes de guardar.</div>
+        <div class="hint" id="redactHint">Cookies, CSRF, and common fields are redacted before saving.</div>
       </div>
     </div>
   </div>
 
   <div class="actions">
-    <button id="btnRecord">▶ Iniciar</button>
-    <button id="btnPause" style="display:none">⏸ Pausar</button>
-    <button id="btnDownload" disabled>⬇ Descargar</button>
-    <button id="btnClear" title="Limpiar">🗑</button>
+    <button id="btnRecord">▶ Start</button>
+    <button id="btnPause" style="display:none">⏸ Pause</button>
+    <button id="btnDownload" disabled data-i18n="btnDownload">⬇ Download</button>
+    <button id="btnClear" data-i18n-title="btnClearTitle" title="Clear">🗑</button>
   </div>
 
   <div class="section">
-    <button id="btnDownloadCookies" type="button">⬇ Descargar cookies del sitio</button>
-    <div class="hint" id="cookiesHint">Descarga un .json con las cookies de auth (incluye httpOnly como li_at) + el header Cookie listo para replay. No se guardan en la captura.</div>
+    <button id="btnDownloadCookies" type="button" data-i18n="btnDownloadCookies">⬇ Download site cookies</button>
+    <div class="hint" id="cookiesHint" data-i18n="cookiesHintDefault">Downloads a .json with the site's auth cookies (incl. httpOnly like li_at) + the Cookie header ready for replay. Never saved in the capture.</div>
   </div>
 
   <div class="recording-indicator" id="recordingIndicator">
     <div class="pulse"></div>
-    Grabando...
+    <span data-i18n="recordingIndicator">Recording...</span>
   </div>
 
   <div class="preview" id="preview">
-    <div class="preview-title">Endpoints capturados</div>
+    <div class="preview-title" data-i18n="endpointsCapturedTitle">Captured endpoints</div>
     <div id="endpointList">
-      <div class="empty-state">Presiona Iniciar y usa el sitio normalmente</div>
+      <div class="empty-state" data-i18n="emptyState">Press Start and use the site normally</div>
     </div>
   </div>
 

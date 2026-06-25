@@ -16,7 +16,7 @@ const OUT = path.join(REPO, 'dist', 'unpacked');
 
 // Everything Chrome needs to load the extension unpacked. (popup.js lives
 // under src/, so the 'src' entry already covers it.)
-const INCLUDE = ['manifest.json', 'popup.html', 'src', 'icons'];
+const INCLUDE = ['manifest.json', 'popup.html', 'src', 'icons', '_locales'];
 
 function copyRecursive(src, dst) {
   const stat = fs.statSync(src);
